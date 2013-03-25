@@ -1,0 +1,1556 @@
+#LyX 2.0 created this file. For more info see http://www.lyx.org/
+\lyxformat 413
+\begin_document
+\begin_header
+\textclass article
+\use_default_options false
+\maintain_unincluded_children false
+\language english
+\language_package default
+\inputencoding auto
+\fontencoding global
+\font_roman lmodern
+\font_sans lmss
+\font_typewriter lmtt
+\font_default_family default
+\use_non_tex_fonts false
+\font_sc false
+\font_osf false
+\font_sf_scale 100
+\font_tt_scale 100
+
+\graphics default
+\default_output_format default
+\output_sync 0
+\bibtex_command default
+\index_command default
+\paperfontsize default
+\spacing single
+\use_hyperref false
+\papersize default
+\use_geometry false
+\use_amsmath 1
+\use_esint 1
+\use_mhchem 0
+\use_mathdots 1
+\cite_engine basic
+\use_bibtopic false
+\use_indices false
+\paperorientation portrait
+\suppress_date false
+\use_refstyle 0
+\index Index
+\shortcut idx
+\color #008000
+\end_index
+\secnumdepth 3
+\tocdepth 3
+\paragraph_separation indent
+\paragraph_indentation default
+\quotes_language english
+\papercolumns 1
+\papersides 1
+\paperpagestyle default
+\tracking_changes false
+\output_changes false
+\html_math_output 0
+\html_css_as_file 0
+\html_be_strict false
+\end_header
+
+\begin_body
+
+\begin_layout Title
+Wool 0.1 users guide
+\end_layout
+
+\begin_layout Author
+Karl-Filip Faxén
+\end_layout
+
+\begin_layout Abstract
+This document gives a short reference to the Wool library.
+ Wool is a library providing lightweight tasks on top of 
+\family typewriter
+pthreads
+\family default
+.
+ Its performance is superior to that of Cilk and the Intel TBB, at least
+ in terms of overhead.
+\end_layout
+
+\begin_layout Abstract
+Most of this document describes version 0.1 (unsurprising, given the title)
+ but there is also a section describing some new features in version 0.1.5.
+\end_layout
+
+\begin_layout Section
+Copying
+\end_layout
+
+\begin_layout LyX-Code
+This Source Code Form is subject to the terms of the Mozilla Public License,
+ v.
+ 2.0.
+ If a copy of the MPL was not distributed with this file, You can obtain
+ one at http://mozilla.org/MPL/2.0/.
+\end_layout
+
+\begin_layout Section
+Introduction
+\end_layout
+
+\begin_layout Standard
+Wool grew out of an attempt to understand how to design a really low overhead
+ user-level task scheduler.
+ For convenience, Wool is a C-library rather than being implemented in a
+ compiler code generator or as a preprocessor.
+ However, Wool uses macros and inline functions to make the overhead involved
+ in integrating the task operations into the operations of the program small.
+\end_layout
+
+\begin_layout Standard
+A Wool program starts execution with the library initializing itself, in
+ particular starting one OS thread for each physical processor (right now,
+ the number of threads is a command line option decoded by the library).
+ These threads are called workers.
+ Each worker has a set of data structures for implementing task management,
+ in particular a pool of tasks that are ready to execute.
+ An important design decision in Wool is that this pool is a stack that
+ grows and shrinks roughly in step with the main stack.
+ This simplifies memory management enormously.
+\end_layout
+
+\begin_layout Standard
+Parallelism is introduced by spawning tasks, which roughly corresponds to
+ doing an asynchronous function call.
+ Spawning a task is implemented by allocating a task descriptor on the top
+ of the task stack and initializing it with some administrative information,
+ including a pointer to the code of the task, and some arguments to the
+ task.
+ The program using Wool is responsible for joining with every spawned task;
+ if the task has not been stolen by another worker while in the task pool,
+ it is then executed by the same worker that spawned it.
+\end_layout
+
+\begin_layout Standard
+Parallel 
+\family typewriter
+for
+\family default
+ loops (also known as 
+\family typewriter
+doall
+\family default
+ loops) are also supported.
+ Due to the lack of nested functions in C, named loop bodies are defined
+ out of line and invoked by the 
+\family typewriter
+FOR
+\family default
+ macro.
+\end_layout
+
+\begin_layout Section
+API Reference
+\end_layout
+
+\begin_layout Standard
+This section gives a reference to the Wool API.
+ There are constructs for defining, spawning and synchronizing with tasks.
+ These constructs are all macros; the task definition macros have rather
+ complicated definitions.
+ The task definition macros are arity specific; the macros for defining
+ tasks of arity one is different from those for defining tasks of arity
+ two and so on.
+ This is the reason why the Wool header file is distributed in the form
+ of a shell script that takes an integer 
+\begin_inset Formula $n$
+\end_inset
+
+ and produces a header file with task definition macros up to arity 
+\begin_inset Formula $n$
+\end_inset
+
+.
+\end_layout
+
+\begin_layout Subsection
+Task definition
+\end_layout
+
+\begin_layout Standard
+Tasks are introduced using task definitions of the form:
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\[
+\mathtt{TASK\_}n\mathtt{(}rtype,\, name,\, argtype_{1},\, argname_{1},\,\ldots,\, argtype_{n},\, argname_{n}\mathtt{)}\mathtt{\{}\, body\,\mathtt{\}}
+\]
+
+\end_inset
+
+Here, 
+\begin_inset Formula $n$
+\end_inset
+
+ is the number of arguments to the task (its arity), 
+\begin_inset Formula $rtype$
+\end_inset
+
+ is the return type of the task (it returns objects of type 
+\begin_inset Formula $rtype$
+\end_inset
+
+), 
+\begin_inset Formula $argtype_{i}$
+\end_inset
+
+ is the type of the 
+\begin_inset Formula $i$
+\end_inset
+
+'th argument and 
+\begin_inset Formula $argname_{i}$
+\end_inset
+
+ is its name.
+ Finally, 
+\begin_inset Formula $body$
+\end_inset
+
+ is the code that is executed when the task is invoked.
+\end_layout
+
+\begin_layout Standard
+A task as defined above closely corresponds to a function with the following
+ definition:
+\begin_inset Formula 
+\[
+rtype\: name(argtype_{1}\: argname_{1},\,\ldots,\, argtype_{n}\: argname_{n}\mathtt{)}\mathtt{\{}\, body\,\mathtt{\}}
+\]
+
+\end_inset
+
+ (In fact, a function with a very similar definition is part of the implementati
+on of the task definition.) In particular, the same identifiers are visible
+ in 
+\begin_inset Formula $body$
+\end_inset
+
+ and the same way should be used to return from it.
+\end_layout
+
+\begin_layout Standard
+There is also a second form that is used for tasks that do not return a
+ result:
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\[
+\mathtt{VOID\_TASK\_}n\mathtt{(}name,\, argtype_{1},\, argname_{1},\,\ldots,\, argtype_{n},\, argname_{n}\mathtt{)}\mathtt{\{}\, body\,\mathtt{\}}
+\]
+
+\end_inset
+
+The corresponding function definition is:
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\[
+\mathtt{void}\: name\mathtt{(}argtype_{1}\: argname_{1},\,\ldots,\, argtype_{n}\: argname_{n}\mathtt{)}\mathtt{\{}\, body\,\mathtt{\}}
+\]
+
+\end_inset
+
+Both 
+\family typewriter
+TASK
+\family default
+ and 
+\family typewriter
+VOID_TASK
+\family default
+ are indexed families of macros.
+ Valid indices are determined by the argument to 
+\family typewriter
+wool.sh
+\family default
+ when generating 
+\family typewriter
+wool.h
+\family default
+.
+\end_layout
+
+\begin_layout Subsection
+Spawning tasks
+\end_layout
+
+\begin_layout Standard
+The task 
+\begin_inset Formula $name$
+\end_inset
+
+ with arity 
+\begin_inset Formula $n$
+\end_inset
+
+ is spawned with arguments 
+\begin_inset Formula $e_{1}$
+\end_inset
+
+ to 
+\begin_inset Formula $e_{n}$
+\end_inset
+
+ by:
+\begin_inset Formula 
+\[
+\mathtt{SPAWN(}name,\, e_{1},\,\ldots,\, e_{n}\mathtt{)}
+\]
+
+\end_inset
+
+This expression, which does not return a value, causes the new task to be
+ placed in the task pool of the executing worker, so that it can be stolen
+ by other workers.
+\end_layout
+
+\begin_layout Subsection
+Synchronizing with tasks
+\end_layout
+
+\begin_layout Standard
+A previously spawned task called 
+\begin_inset Formula $name$
+\end_inset
+
+ can be synchronized with its parent as follows:
+\begin_inset Formula 
+\[
+\mathtt{SYNC(}name\mathtt{)}
+\]
+
+\end_inset
+
+This expression has the type of the task 
+\begin_inset Formula $name$
+\end_inset
+
+, that is, if 
+\begin_inset Formula $name$
+\end_inset
+
+ was defined by 
+\begin_inset Formula $\mathtt{TASK\_}n\mathtt{(}rtype,\, name,\,\ldots\mathtt{)}\mathtt{\{}\, body\,\mathtt{\}}$
+\end_inset
+
+, the type is 
+\begin_inset Formula $rtype$
+\end_inset
+
+ while if the task definition was of the form 
+\begin_inset Formula $\mathtt{VOID\_TASK\_}n\mathtt{(}name,\,\ldots\mathtt{)}\mathtt{\{}\, body\,\mathtt{\}}$
+\end_inset
+
+, the type is 
+\family typewriter
+void
+\family default
+.
+\end_layout
+
+\begin_layout Standard
+A 
+\family typewriter
+SYNC
+\family default
+ matches the last unsynced 
+\family typewriter
+SPAWN
+\family default
+, making it synced so that the previous unsynced spawn becomes the new last
+ unsynced spawn.
+ This behavior simplifies memory management by allowing the task pool to
+ be maintained as a stack; a 
+\family typewriter
+SPAWN
+\family default
+ pushes a task on the stack and a 
+\family typewriter
+SYNC
+\family default
+ pops the top task off of the stack and synchronizes with it.
+\end_layout
+
+\begin_layout Standard
+Synchronization can entail one of three different actions on the part of
+ the calling task:
+\end_layout
+
+\begin_layout Itemize
+If the task was not stolen, it is invoked directly by a function call to
+ the task's work function.
+ This is by far the most common case, and the inclusion of the task name
+ in the sync syntax allows the call to be an ordinary direct C function
+ call that can even be inlined.
+\end_layout
+
+\begin_layout Itemize
+If the task was stolen and the thief has completed executing the task, its
+ result value (if any) is extracted from the task and returned.
+\end_layout
+
+\begin_layout Itemize
+If the task was stolen and has not completed, the calling task becomes blocked.
+ The default behavior in the current version of Wool is that the worker
+ executing the blocked task attempts to steal a task from the thief, a strategy
+ called 
+\emph on
+leap frogging.
+\end_layout
+
+\begin_layout Subsection
+Invoking tasks directly
+\end_layout
+
+\begin_layout Standard
+As an optimization, Wool provides a direct invocation macro for tasks.
+ Thus the expression
+\begin_inset Formula 
+\[
+\mathtt{CALL(}name,\, e_{1},\,\ldots,\, e_{n}\mathtt{)}
+\]
+
+\end_inset
+
+is equivalent to 
+\begin_inset Formula 
+\[
+\mathtt{SPAWN(}name,\, e_{1},\,\ldots,\, e_{n}\mathtt{),\, SYNC(}name\mathtt{)}
+\]
+
+\end_inset
+
+except more efficient (and briefer).
+ A direct task invocation becomes a simple direct function call with the
+ required hidden argument added.
+\end_layout
+
+\begin_layout Subsection
+Loop bodies
+\end_layout
+
+\begin_layout Standard
+A loop body is defined using the 
+\family typewriter
+LOOP_BODY
+\family default
+ family of macros, as follows:
+\end_layout
+
+\begin_layout Standard
+\begin_inset Formula 
+\[
+\mathtt{LOOP\_BODY\_}n\mathtt{(}name,\, grainsize,\, ixvartype,\, ixvar,\, argtype_{1},\, argname_{1},\,\ldots,\, argtype_{n},\, argname_{n}\mathtt{)}\mathtt{\{}\, body\,\mathtt{\}}
+\]
+
+\end_inset
+
+Here, 
+\begin_inset Formula $name$
+\end_inset
+
+ is the name of the loop body (used when invoking the loop), 
+\begin_inset Formula $grainsize$
+\end_inset
+
+ is a lower bound on the number of cycles the loop body takes to execute
+ (used by Wool to balance parallelism versus overhead), 
+\begin_inset Formula $ixvar$
+\end_inset
+
+ is the index variable of the loop and 
+\begin_inset Formula $ixvartype$
+\end_inset
+
+ is its type (typically an integer type like 
+\family typewriter
+int
+\family default
+, 
+\family typewriter
+long
+\family default
+, 
+\family typewriter
+unsigned long long
+\family default
+ or similar).
+ Finally, the rest are loop invariant parameters that will have the same
+ values in all iterations, given when invoking the loop with 
+\family typewriter
+FOR
+\family default
+.
+\end_layout
+
+\begin_layout Standard
+The loop body 
+\begin_inset Formula $body$
+\end_inset
+
+ performs 
+\emph on
+one
+\emph default
+ iteration of the loop and should be written as if it were the body of a
+ C function (which we refer to as the 
+\emph on
+loop body function
+\emph default
+)
+\emph on
+ 
+\emph default
+declared
+\emph on
+ 
+\emph default
+as:
+\begin_inset Formula 
+\[
+\mathtt{void}\: name\mathtt{(}ixvartype\, ixvar,\, argtype_{1}\: argname_{1},\,\ldots,\, argtype_{n}\: argname_{n}\mathtt{)}
+\]
+
+\end_inset
+
+It is ok to have a very light weight loop body; Wool will implement the
+ parallel loop using a tree of divide and conquer tasks down to a certain
+ level, where a loop will be executed calling the loop body function.
+ Since the call is direct, and the loop body function is marked for inlining,
+ the effect is that the body will be inlined into the loop.
+ The number of iterations that are executed sequentially in this way depends
+ on the 
+\begin_inset Formula $grainsize$
+\end_inset
+
+ value; the cutoff is tuned so that if the loop body really takes 
+\begin_inset Formula $grainsize$
+\end_inset
+
+ cycles to execute, about 1% of execution time should be spent in spawning
+ and syncing with tasks in the parallel divide and conquer tree.
+ That is, if the overhead on a particular machine is 
+\begin_inset Formula $S$
+\end_inset
+
+ cycles for a spawn/sync pair, then 
+\end_layout
+
+\begin_layout Itemize
+if 
+\begin_inset Formula $grainsize$
+\end_inset
+
+ is greater than about 
+\begin_inset Formula $100\times S$
+\end_inset
+
+, the sequential loop will iterate only once, and
+\end_layout
+
+\begin_layout Itemize
+otherwise the cutoff will be 
+\begin_inset Formula $100\times S/grainsize$
+\end_inset
+
+ iterations.
+\end_layout
+
+\begin_layout Standard
+Lying about 
+\begin_inset Formula $grainsize$
+\end_inset
+
+ gives programmers control over the trade off between parallelism and overhead;
+ an underestimate will give lower overhead (more sequential iterations)
+ whereas an overestimate will result in fewer iterations thus exposing more
+ fine grained parallelism and potentially giving better load balancing.
+ There should however be little need for the latter, since the size of the
+ generated tasks at the leaves of the parallel tree is about 
+\begin_inset Formula $100\times S$
+\end_inset
+
+, which for a typical value of 
+\begin_inset Formula $S$
+\end_inset
+
+ of 20 cycles becomes 2000 cycles.
+ This is very small compared to useful task sizes (typically on the order
+ of 100k cycles), and almost all stealing will happen closer to the root
+ with bigger tasks.
+ Thus an underestimate of 
+\begin_inset Formula $grainsize$
+\end_inset
+
+ is unlikely to yield problems with loss of parallelism in practice.
+\end_layout
+
+\begin_layout Standard
+There is a symbolic constant 
+\family typewriter
+LARGE_GRAIN
+\family default
+ that is equal to 
+\begin_inset Formula $100\times S$
+\end_inset
+
+.
+ Using this value for 
+\begin_inset Formula $grainsize$
+\end_inset
+
+ ensures that there each leaf in the parallel divide and conquer tree only
+ executes one loop body.
+\end_layout
+
+\begin_layout Subsection
+Invoking loops
+\end_layout
+
+\begin_layout Standard
+A parallel loop is invoked with iteration bounds 
+\begin_inset Formula $e_{low}$
+\end_inset
+
+ and 
+\begin_inset Formula $e_{high}$
+\end_inset
+
+ and loop invariant arguments 
+\begin_inset Formula $e_{1}$
+\end_inset
+
+ to 
+\begin_inset Formula $e_{n}$
+\end_inset
+
+ as follows:
+\begin_inset Formula 
+\[
+\mathtt{FOR(}name,\, e_{low},\, e_{high,}\, e_{1},\,\ldots,\, e_{n}\mathtt{)}
+\]
+
+\end_inset
+
+This will cause the loop body function to be invoked 
+\begin_inset Formula $e_{high}-e_{low}+1$
+\end_inset
+
+ times, logically in parallel but possibly sequentially to limit overhead.
+ Note that the return type is 
+\family typewriter
+void
+\family default
+; a loop does not return anything.
+\end_layout
+
+\begin_layout Subsection
+Main program
+\end_layout
+
+\begin_layout Standard
+The Wool library contains the 
+\family typewriter
+main
+\family default
+ function, so it gets control at program start up.
+ After initialization it invokes the task called 
+\family typewriter
+main
+\family default
+, which the program should define as a task with two arguments, an 
+\family typewriter
+int
+\family default
+ and a 
+\family typewriter
+char**
+\family default
+, and returning an 
+\family typewriter
+int
+\family default
+, thus:
+\end_layout
+
+\begin_layout LyX-Code
+TASK_2(int, main, int, argc, char**, argv)
+\end_layout
+
+\begin_layout LyX-Code
+{
+\end_layout
+
+\begin_layout LyX-Code
+  ...
+\end_layout
+
+\begin_layout LyX-Code
+}
+\end_layout
+
+\begin_layout Standard
+The library decodes a few flags controlling things like the number of workers
+ and a few other parameters, but it passes the rest of the arguments to
+ the main task, so a Wool program can also have command line arguments.
+\end_layout
+
+\begin_layout Section
+Running Wool Programs
+\end_layout
+
+\begin_layout Standard
+The Wool library decodes the following flags controlling its operation:
+\end_layout
+
+\begin_layout Description
+-p
+\begin_inset space ~
+\end_inset
+
+<n> Number of workers started.
+ If this option is not given, it defaults to a single worker.
+\end_layout
+
+\begin_layout Description
+-s
+\begin_inset space ~
+\end_inset
+
+<n> Number of stealable tasks in the task pool; only the oldest 
+\series bold
+n
+\series default
+ tasks become stealable, decreasing overhead in recursive divide-and-conquer
+ applications while potentially leading to loss of parallelism.
+ If this option is not given, the default is 
+\begin_inset Formula $3+\log_{2}N$
+\end_inset
+
+ where 
+\begin_inset Formula $N$
+\end_inset
+
+ is the number of workers.
+ If the work is well balanced, this gives about eight stealable tasks for
+ each worker.
+\end_layout
+
+\begin_layout Description
+-t
+\begin_inset space ~
+\end_inset
+
+<n> The (initial) size of the task pool of each worker.
+ Defaults to 1000 tasks per pool.
+\end_layout
+
+\begin_layout Standard
+Decoding of options stops when an unknown option is found, and the rest
+ of the arguments (starting from the offending option) are passed to the
+ 
+\family typewriter
+main
+\family default
+ task of the program.
+\end_layout
+
+\begin_layout Section
+Building the library
+\end_layout
+
+\begin_layout Standard
+Currently, the library is built as an object file that is linked to the
+ program (that is at least what the make file does).
+ There is because the library itself defines the 
+\family typewriter
+main
+\family default
+ function of the program; in addition, as the code is rather small and performan
+ce sensitive, the present strategy seems reasonable.
+ 
+\end_layout
+
+\begin_layout Standard
+There are a number of build time options that are important.
+ These affect both the header file 
+\family typewriter
+wool.h
+\family default
+ and the implementation of the library in 
+\family typewriter
+wool.c
+\family default
+.
+\end_layout
+
+\begin_layout Description
+MAX_ARITY The header file 
+\family typewriter
+wool.h
+\family default
+ is generated by a shell script called 
+\family typewriter
+wool.sh
+\family default
+ which takes an argument 
+\begin_inset Formula $n$
+\end_inset
+
+ and generates task definition macros for arity 1 to 
+\begin_inset Formula $n$
+\end_inset
+
+ and loop body macros for arity 0 to 
+\begin_inset Formula $n-2$
+\end_inset
+
+ (the loop body definition macro for arity 
+\begin_inset Formula $i$
+\end_inset
+
+ uses the task definition macro for arity 
+\begin_inset Formula $i+2$
+\end_inset
+
+).
+ The default is 10.
+\end_layout
+
+\begin_layout Description
+TASK_PAYLOAD All task descriptors are the same size in the current implementatio
+n, simplifying (and thus speeding up!) the management of the task pool.
+ This parameter controls the size in bytes needed to store the arguments
+ of the largest task in the program.
+ The default is 
+\begin_inset Formula $\mathbf{MAX\_ARITY}\times8$
+\end_inset
+
+, allowing each argument in the maximum arity task to be a 
+\family typewriter
+double
+\family default
+.
+ The argument area is guaranteed to be aligned on an 8 byte boundary, which
+ is typically the strictest alignment requirement for conventional data
+ types in current processor implementations.
+ If you use larger arguments than 8 bytes (for instance structs), you may
+ need to use this option, as well as if you only use smaller arguments and
+ wish to save memory.
+\end_layout
+
+\begin_layout Description
+FINEST_GRAIN This controls the number of iterations executed as a loop at
+ the leaves of a divide and conquer tree implementing a parallel loop.
+ Wool will use the 
+\begin_inset Formula $grainsize$
+\end_inset
+
+ value given in the loop body definition to ensure that computations cheaper
+ than 
+\series bold
+FINEST_GRAIN
+\series default
+ are executed sequentially.
+\end_layout
+
+\begin_layout Description
+COUNT_EVENTS Setting this parameter to 1 enables code which counts various
+ events (spawns, steals, \SpecialChar \ldots{}
+) and prints statistics to standard error, while
+ setting it to 0 builds with this code disabled, which is also the default.
+\end_layout
+
+\begin_layout Section
+Performance analysis
+\end_layout
+
+\begin_layout Standard
+In this section we give some brief ideas about how to figure out whether
+ a Wool program runs efficiently and how to improve it if not.
+\end_layout
+
+\begin_layout Subsection
+Critical path profiling
+\end_layout
+
+\begin_layout Standard
+The 
+\emph on
+critical path
+\emph default
+ of a computation is the longest sequence of data dependent operations of
+ the computation; the 
+\emph on
+critical path length
+\emph default
+ or 
+\emph on
+span
+\emph default
+ of a computation is the time to execute the critical path, which is also
+ the time to execute the program on an unlimited number of processors (ignoring
+ overhead).
+ The average parallelism is given by the dividing the execution time on
+ one processor by the span.
+\end_layout
+
+\begin_layout Standard
+For a work stealing scheduler like Wool, the span gives an upper bound on
+ the execution time of a computation on a given number of processors: 
+\begin_inset Formula 
+\[
+T_{p}<T_{\infty}+\frac{T_{1}}{p}
+\]
+
+\end_inset
+
+Here, 
+\begin_inset Formula $T_{p}$
+\end_inset
+
+ is the execution time on 
+\begin_inset Formula $p$
+\end_inset
+
+ processors, 
+\begin_inset Formula $T_{\infty}$
+\end_inset
+
+ is the span and 
+\begin_inset Formula $p$
+\end_inset
+
+ is the number of processors.
+ The two terms on the right hand side are, roughly, the execution time if
+ we ignore resource constraints and the execution tme if we ignore dependencies.
+ Both are lower bounds on the execution time so we have 
+\begin_inset Formula 
+\[
+T_{p}>\max(T_{\infty},\frac{T_{1}}{p})
+\]
+
+\end_inset
+
+ as a combined lower bound.
+\end_layout
+
+\begin_layout Standard
+For computations with frequent steals, the overhead of stealing must be
+ taken into account when computing span.
+ We do this during the span measurement by, at each join point, simulating
+ the optimal scheduling desicion given a certain overhead.
+ The span 
+\begin_inset Formula $S$
+\end_inset
+
+ of the fork-join region is computed as 
+\begin_inset Formula 
+\[
+S=\min(\max(S_{1},S_{2})+T_{S},S_{1}+S_{2})
+\]
+
+\end_inset
+
+where 
+\begin_inset Formula $S_{1}$
+\end_inset
+
+ and 
+\begin_inset Formula $S_{2}$
+\end_inset
+
+ are the span of the two parallel subcomputations and 
+\begin_inset Formula $T_{S}$
+\end_inset
+
+ is the stealing overhead.
+ Basically, if the smaller subcomputation is cheaper than the stealing overhead,
+ we compute the span as if the subcomputations were run sequentially.
+ 
+\end_layout
+
+\begin_layout Standard
+Reasonable values for the stealing overhead is 1000-2000 cycles for our
+ 2.3GHz dual quadcore Opteron and 500-1000 cycles for our 700 MHz Tilera
+ machine.
+\end_layout
+
+\begin_layout Standard
+Wool can be built with instrumentation for finding the span by defining
+ the preprocessor symbol 
+\family typewriter
+WOOL_MEASURE_SPAN
+\family default
+ to the value 1, either using 
+\family typewriter
+-D
+\family default
+ at the compiler command line or by saying 
+\family typewriter
+make WOOL_MEASURE_SPAN=1
+\family default
+.
+ The program should then be run on a single processor and the total execution
+ time, span and an estimate of speedup on different numbers of processors
+ are output on 
+\family typewriter
+stderr
+\family default
+.
+ The desired stealing overhead can be set at run time using the 
+\family typewriter
+-c
+\family default
+ option to the Wool program.
+ The unit is whatever the time base we use measures; for x86s we use the
+ time stamp counter which gives processor cycles and for the Tilera the
+ unit is likewise processor cycles.
+ The pie time profile prints the frequency of the measurement clock.
+ 
+\end_layout
+
+\begin_layout Subsection
+Pie time profiling
+\end_layout
+
+\begin_layout Standard
+Wool can be built to collect information about the time spent on different
+ kinds of work, which we call 
+\emph on
+pie time profiling
+\emph default
+ since one might present the infomation as a pie chart.
+ This time is collected per worker and summed by category, so it is CPU
+ time rather than elapsed time.
+ Therefore, the sum of the categories should be close to the sum of user
+ and system time as reported by for instance the Linux 
+\family typewriter
+time 
+\family default
+command.
+ The categories are:
+\end_layout
+
+\begin_layout Description
+Startup Time spent on startup, for instance creating workers, up until the
+ first successful steal (or exit, for workers with no successful steals).
+\end_layout
+
+\begin_layout Description
+Work Time spent executing the application, including the part of Wool related
+ to inlined (never stolen) tasks.
+\end_layout
+
+\begin_layout Description
+Overhead Time spent executing successful steal operations.
+\end_layout
+
+\begin_layout Description
+Search Time spent looking for work, that is, executing failed steal operations.
+\end_layout
+
+\begin_layout Description
+Exit Time spent in final synchronization, from the last exit from application
+ code until the worker itself exits.
+\end_layout
+
+\begin_layout Standard
+Further, the 
+\series bold
+work
+\series default
+, 
+\series bold
+overhead
+\series default
+ and 
+\series bold
+search
+\series default
+ categories are divided into steal and leap subcategories.
+ The steal subcategory counts the time spent when the steal routine is called
+ from the main loop of the worker wheras the leap subcategory is associated
+ with leapfrogging steals, that is, when steal is called from the join operation.
+ Steal work is the application code invoked by successful ordinary steals
+ wheras leap work is application code invoked by successful leapfrogging
+ steals.
+\end_layout
+
+\begin_layout Standard
+In addition to aggregate times, time per operation is also reported for
+ the following operations (also distinguished as leap frogging related or
+ ordinary):
+\end_layout
+
+\begin_layout Description
+Succesful
+\begin_inset space ~
+\end_inset
+
+steal The part of a succesful steal until the invocation of application
+ code.
+\end_layout
+
+\begin_layout Description
+Failed
+\begin_inset space ~
+\end_inset
+
+steal The complete time of a failed steal.
+\end_layout
+
+\begin_layout Description
+Signal The part of a successful steal after the application code returns.
+\end_layout
+
+\begin_layout Standard
+Pie time profiling is enabled by defining the preprocessor symbol 
+\family typewriter
+WOOL_PIE_TIMES
+\family default
+ to the value 1 either using 
+\family typewriter
+-D
+\family default
+ at the compiler command line or by saying 
+\family typewriter
+make WOOL_PIE_TIMES=1
+\family default
+.
+ 
+\end_layout
+
+\begin_layout Subsection
+Performance debugging of Wool code
+\end_layout
+
+\begin_layout Standard
+Here are some hints about assessing the performance of a Wool program.
+ An important starting point is to always choose an input to the program
+ that makes it run at least on the order of a second or so.
+ This might be tricky when scaling to many workers, as you want to compare
+ the same workload when examining scalability.
+ Sometimes I use different input sizes for overlapping ranges of processor
+ counts.
+\end_layout
+
+\begin_layout Subsubsection
+Checking spawn/sync overhead
+\end_layout
+
+\begin_layout Standard
+Typically, you develop a Wool program starting from a sequential one.
+ By comparing the execution time of the sequential version to the execution
+ time of the Wool version on a single processor, you get an idea of the
+ impact of inlined (not stolen) tasks.
+ These times should be very close unless your program is extremely fine
+ grained, like the 
+\family typewriter
+fib
+\family default
+ example program in the Wool distribution where each task performs on the
+ order of ten cycles of work.
+\end_layout
+
+\begin_layout Subsubsection
+Measuring speedup
+\end_layout
+
+\begin_layout Standard
+Compare execution time of the Wool program on different numbers of processors.
+ If the execution time on 
+\begin_inset Formula $p$
+\end_inset
+
+ processors is close
+\begin_inset Foot
+status open
+
+\begin_layout Plain Layout
+Close means 
+\size normal
+\emph on
+close
+\emph default
+, not like within a factor of 2.
+ Wool is supposed to be fast!
+\end_layout
+
+\end_inset
+
+ to 
+\begin_inset Formula $\frac{1}{p}$
+\end_inset
+
+ times the execution time on one processor, you're fine.
+ Otherwise read on.
+\end_layout
+
+\begin_layout Subsubsection
+Do the Wool workers run all the time?
+\end_layout
+
+\begin_layout Standard
+Wool is quite aggressive in using the CPU, effectively busy waiting while
+ looking for work.
+ Hence the sum of user and system time (as reported by 
+\family typewriter
+time
+\family default
+) should be close to the real time times the number of workers.
+ If it is more, a miracle has occurred.
+ If it is less, maybe the machine was not as quiet as intended.
+ 
+\end_layout
+
+\begin_layout Subsubsection
+Do I have too little parallelism?
+\end_layout
+
+\begin_layout Standard
+Do critical path profiling, as described above.
+ If the results are in line with the observed (bad) speedup you need to
+ consider the algorithms you use.
+ Are they as parallel as you think? Also check your initialization code;
+ is it sequential? Maybe you can parallelize it? 
+\end_layout
+
+\begin_layout Standard
+If the program is nondeterministic in the sense that the shape of the dependence
+ graph depends on timing details, the span measurement can be misleading.
+ Consider a program with a shared memo table.
+ The first time a function is called with a certain argument, the result
+ is recorded in the memo table so that subsequent invocations with that
+ argument can reuse the previously computed result.
+ In a single processor execution, the first call with a given argument occurs
+ in the same place in the call tree every time, but in a parallel execution
+ the call (task) tree is traversed in different orders depending on nondetermini
+stic timing details.
+ Hence different invocations with the same argument may be the first one,
+ arbitrarily affecting the value of the span computation.
+\end_layout
+
+\begin_layout Subsubsection
+Where is my program spending its time?
+\end_layout
+
+\begin_layout Standard
+Time to do pie chart profiling.
+ If your program scales well, the CPU time reported when measuring pie times
+ should be similar when increasing the number of processors, but if it is
+ not, check the categories that increase:
+\end_layout
+
+\begin_layout Description
+Work This means that the application code runs slower on larger number of
+ processors.
+ There are three broad classes of causes I have run across here:
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+The program overtaxes shared resources.
+ If your processors are not cores but hardware contexts which share execution
+ units, as on hyperthreaded Intel CPUs, this is normal and probably a sign
+ that your code runs well without the hyperthreading.
+ But it could also be due to for instance limited memory bandwidth (a memcopy
+ benchmark will not scale well) or shared cache size.
+\end_layout
+
+\begin_layout Itemize
+Communication effects; when a worker executes stolen code, the data is not
+ in the cache of the thief but must be read from the original processor.
+ The Cholesky example program behaves like this for small matrix sizes.
+\end_layout
+
+\begin_layout Itemize
+Extra synchronization in the application.
+ If you for instance have a shared data structure protected by a lock, the
+ time spent waiting ends up here.
+ If you have lock free operations, retry time does likewise.
+\end_layout
+
+\end_deeper
+\begin_layout Description
+Steal
+\begin_inset space ~
+\end_inset
+
+search This is a typical sign of insufficient parallelism, so you should
+ have been alerted by the critical path profiling.
+ So if that one looks good, but you still get dramatic increses in steal
+ search time, this might be a problem with the Wool scheduler.
+ 
+\end_layout
+
+\begin_layout Description
+Leap
+\begin_inset space ~
+\end_inset
+
+search If your critical path profile looks good, but you get swamped by
+ leap search time, it means that the transitive leap frogging algorithm
+ used by Wool is not strong enough to handle the joins in the program.
+ This is possible since the Wool scheduler is not completely greedy; when
+ blocked at a join (sync), transitive leap frogging only allows you to steal
+ a subcomputation of the one for which you're waiting.
+ This is uncommon (I've never seen such programs in the wild) but possible.
+ Try to divide large tasks into smaller; maybe you wanted large tasks to
+ avoid overhead? 
+\end_layout
+
+\begin_layout Description
+Overhead I've never seen a program where overhead is significant 
+\emph on
+and
+\emph default
+ not much smaller than search, so do drop me an email!
+\end_layout
+
+\begin_layout Section
+News in version 0.1.5
+\end_layout
+
+\begin_layout Standard
+Version 0.1.5 brings a number of improvements without changing the programming
+ API.
+ Here is a brief tour of the most important ones:
+\end_layout
+
+\begin_layout Subsection
+Root calls
+\end_layout
+
+\begin_layout Standard
+In earlier versions of Wool, a task could only be used (spawned, synced
+ or called) from another task.
+ This meant that the 
+\family typewriter
+main
+\family default
+ function had to be a task, as described above (version 0.2, now obsolete,
+ also lifted that restriction).
+ From version 0.1.5, Wool now allows to use (
+\family typewriter
+SPAWN
+\family default
+, 
+\family typewriter
+CALL
+\family default
+, or 
+\family typewriter
+SYNC
+\family default
+ with) tasks from any C function, although such calls will be slower since
+ they need to recompute the task stack pointer and use operations of the
+ underlying thread library (
+\family typewriter
+pthreads
+\family default
+) to find the per worker data structures.
+ There is no change of syntax; the same macros are used in root as well
+ as nested position.
+\end_layout
+
+\begin_layout Standard
+This change means that old style Wool programs, whether legacy code or newly
+ written, need to be linked with the file 
+\family typewriter
+wool-main.o
+\family default
+, generated from 
+\family typewriter
+wool-main.c
+\family default
+, since the run-time system no longer defines 
+\family typewriter
+main()
+\family default
+.
+ New style programs, on the other hand, need to start and stop the Wool
+ run time system, so they should call the following functions:
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+int wool_init(int argc, char **argv)
+\family default
+ which initializes the run time system using the supplied command line options
+ and returns the number of remaining arguments after eating the Wool options.
+ Remaining options are shifted to the front, so after the call, 
+\family typewriter
+argv
+\family default
+ can be used as if the Wool options had not been there and the return value
+ gives the number of remaining arguments.
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+void wool_fini(void)
+\family default
+ which stops the run time system, in particular it terminates the workers
+ and prints any statistics gathered to 
+\family typewriter
+stderr
+\family default
+.
+\end_layout
+
+\begin_layout Subsection
+Support for separate compilation
+\end_layout
+
+\begin_layout Standard
+In previous versions of Wool, a task had to be defined in the same file
+ that it was used since there was no way of declaring the identifiers that
+ a task definition creates.
+ There was, so to speak, nothing to put in the header file.
+ We have now split the functionality of the (
+\family typewriter
+VOID_
+\family default
+)
+\family typewriter
+TASK_
+\family default
+\emph on
+n
+\emph default
+ macros into separate declaration and implementaion macros which take the
+ form 
+\begin_inset Formula 
+\[
+\begin{array}{l}
+\mathtt{TASK\_DECL(}RT,F,T_{1},\ldots,T_{n}\mathtt{)}\\
+\mathtt{VOID\_TASK\_DECL(}F,T_{1},\ldots,T_{n}\mathtt{)}\\
+\mathtt{TASK\_IMPL(}RT,F,T_{1},V_{1},\ldots,T_{n},V_{n}\mathtt{)}\\
+\mathtt{VOID\_TASK\_IMPL(}F,T_{1},V_{1},\ldots,T_{n},V_{n}\mathtt{)}
+\end{array}
+\]
+
+\end_inset
+
+where 
+\begin_inset Formula $RT$
+\end_inset
+
+ is the return type, 
+\begin_inset Formula $F$
+\end_inset
+
+ is the task name, the 
+\begin_inset Formula $T_{i}$
+\end_inset
+
+ are the argument types, and the 
+\begin_inset Formula $V_{i}$
+\end_inset
+
+ are the argument names.
+ The declaration macro goes into the header file and the implementation
+ macro into the C file.
+ A task declaration can also be used in a single file program as a forward
+ declaration allowing mutually recursive tasks.
+ For convenience and compatibility, the old (
+\family typewriter
+VOID_
+\family default
+)
+\family typewriter
+TASK_
+\family default
+\emph on
+n
+\emph default
+ macros are still provided, each defined as a pair of a corresponding declaratio
+n and implementation.
+\end_layout
+
+\begin_layout Standard
+The non inlined functions defined by these macros are global, not static,
+ so you should avoid identically named tasks in the same program.
+\end_layout
+
+\begin_layout Subsection
+Reimplemented task stack
+\end_layout
+
+\begin_layout Standard
+The Wool task stack is now extensible, making the 
+\series bold
+-t
+\series default
+ run time flag obsolete.
+\end_layout
+
+\begin_layout Subsection
+Adaptive private/public boundary
+\end_layout
+
+\begin_layout Standard
+The number of public positions in the task queue (previously known as the
+ 
+\begin_inset Quotes eld
+\end_inset
+
+stealable tasks
+\begin_inset Quotes erd
+\end_inset
+
+) is now adjusted at run time and should not be necessary to control manually.
+ Thus the 
+\series bold
+-s
+\series default
+ run time flag is also obsolete.
+\end_layout
+
+\begin_layout Subsection
+Support for TilePRO64
+\end_layout
+
+\begin_layout Standard
+The Tilera manycore processor TilePRO64 is now supported.
+\end_layout
+
+\begin_layout Subsection
+Additional options
+\end_layout
+
+\begin_layout Standard
+There are many more options, both build time and run time.
+ These are best left at their default values except by the seriously adventurous
+ explorer.
+ They are mainly concerned with tuning Wool to extract the last few percents
+ of performance by controlling various arcane variations on the basic work
+ stealing scheduler.
+ 
+\end_layout
+
+\begin_layout Standard
+
+\end_layout
+
+\end_body
+\end_document
