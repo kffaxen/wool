@@ -1,4 +1,4 @@
 wool
 ====
 
-A C library / maco package for fork-join task parallel programming.
+A C library / maco package for nested fork-join task parallel programming.
