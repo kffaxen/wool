@@ -61,7 +61,7 @@
 \begin_body
 
 \begin_layout Title
-Wool 0.1 users guide
+Wool 0.1.8 users guide
 \end_layout
 
 \begin_layout Author
@@ -79,27 +79,23 @@ pthreads
  in terms of overhead.
 \end_layout
 
-\begin_layout Abstract
-Most of this document describes version 0.1 (unsurprising, given the title)
- but there is also a section describing some new features in version 0.1.5.
-\end_layout
-
 \begin_layout Section
 Copying
 \end_layout
 
-\begin_layout LyX-Code
-This Source Code Form is subject to the terms of the Mozilla 
-\end_layout
+\begin_layout Standard
+Appendix
+\begin_inset space ~
+\end_inset
 
-\begin_layout LyX-Code
-Public License, v.
- 2.0.
- If a copy of the MPL was not distributed 
-\end_layout
 
-\begin_layout LyX-Code
-with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "sec:License"
+
+\end_inset
+
+ gives the BSD-style license of Wool.
 \end_layout
 
 \begin_layout Section
@@ -117,8 +113,7 @@ Wool grew out of an attempt to understand how to design a really low overhead
 
 \begin_layout Standard
 A Wool program starts execution with the library initializing itself, in
- particular starting one OS thread for each physical processor (right now,
- the number of threads is a command line option decoded by the library).
+ particular starting one OS thread for each physical processor.
  These threads are called workers.
  Each worker has a set of data structures for implementing task management,
  in particular a pool of tasks that are ready to execute.
@@ -134,9 +129,9 @@ Parallelism is introduced by spawning tasks, which roughly corresponds to
  of the task stack and initializing it with some administrative information,
  including a pointer to the code of the task, and some arguments to the
  task.
- The program using Wool is responsible for joining with every spawned task;
- if the task has not been stolen by another worker while in the task pool,
- it is then executed by the same worker that spawned it.
+ The application program using Wool is responsible for joining with every
+ spawned task; if the task has not been stolen by another worker while in
+ the task pool, it is then executed by the same worker that spawned it.
 \end_layout
 
 \begin_layout Standard
@@ -182,6 +177,40 @@ This section gives a reference to the Wool API.
 \end_layout
 
 \begin_layout Subsection
+Creating parallelism with tasks and loops
+\end_layout
+
+\begin_layout Standard
+This section describes the macros that are used to create and manage parallelism.
+ Wool allows to use 
+\family typewriter
+SPAWN
+\family default
+, 
+\family typewriter
+CALL
+\family default
+, 
+\family typewriter
+SYNC
+\family default
+, or 
+\family typewriter
+FOR
+\family default
+ in any C function, although such calls will be slower when located in an
+ ordinary C function than when located in a task or loop body.
+ This is because they need to recompute the task stack pointer and use operation
+s of the underlying thread library (
+\family typewriter
+pthreads
+\family default
+) to find the per worker data structures.
+ There is no change of syntax; the same macros are used in C functions and
+ in tasks/loop bodies.
+\end_layout
+
+\begin_layout Subsubsection
 Task definition
 \end_layout
 
@@ -292,7 +321,7 @@ wool.h
 .
 \end_layout
 
-\begin_layout Subsection
+\begin_layout Subsubsection
 Spawning tasks
 \end_layout
 
@@ -326,7 +355,7 @@ This expression, which does not return a value, causes the new task to be
  by other workers.
 \end_layout
 
-\begin_layout Subsection
+\begin_layout Subsubsection
 Synchronizing with tasks
 \end_layout
 
@@ -420,7 +449,7 @@ If the task was stolen and has not completed, the calling task becomes blocked.
 leap frogging.
 \end_layout
 
-\begin_layout Subsection
+\begin_layout Subsubsection
 Invoking tasks directly
 \end_layout
 
@@ -447,7 +476,7 @@ except more efficient (and briefer).
  required hidden argument added.
 \end_layout
 
-\begin_layout Subsection
+\begin_layout Subsubsection
 Loop bodies
 \end_layout
 
@@ -621,11 +650,11 @@ LARGE_GRAIN
 \begin_inset Formula $grainsize$
 \end_inset
 
- ensures that there each leaf in the parallel divide and conquer tree only
- executes one loop body.
+ ensures that each leaf in the parallel divide and conquer tree only executes
+ one loop body.
 \end_layout
 
-\begin_layout Subsection
+\begin_layout Subsubsection
 Invoking loops
 \end_layout
 
@@ -655,10 +684,28 @@ A parallel loop is invoked with iteration bounds
 \end_inset
 
 This will cause the loop body function to be invoked 
-\begin_inset Formula $e_{high}-e_{low}+1$
+\begin_inset Formula $e_{high}-e_{low}$
 \end_inset
 
- times, logically in parallel but possibly sequentially to limit overhead.
+ times as in a C for loop of the form:
+\end_layout
+
+\begin_layout LyX-Code
+for( i = 
+\begin_inset Formula $e_{low}$
+\end_inset
+
+; i < 
+\begin_inset Formula $e_{high}$
+\end_inset
+
+; i++ ) { \SpecialChar \ldots{}
+ }
+\end_layout
+
+\begin_layout Standard
+The iterations are executed logically in parallel but possibly sequentially
+ to limit overhead.
  Note that the return type is 
 \family typewriter
 void
@@ -666,16 +713,103 @@ void
 ; a loop does not return anything.
 \end_layout
 
+\begin_layout Subsubsection
+Support for separate compilation
+\end_layout
+
+\begin_layout Standard
+In previous versions of Wool, a task had to be defined in the same file
+ that it was used since there was no way of declaring the identifiers that
+ a task definition creates.
+ There was, so to speak, nothing to put in the header file.
+ We have now split the functionality of the (
+\family typewriter
+VOID_
+\family default
+)
+\family typewriter
+TASK_
+\family default
+\emph on
+n
+\emph default
+ macros into separate declaration and implementaion macros which take the
+ form 
+\begin_inset Formula 
+\[
+\begin{array}{l}
+\mathtt{TASK\_DECL(}RT,F,T_{1},\ldots,T_{n}\mathtt{)}\\
+\mathtt{VOID\_TASK\_DECL(}F,T_{1},\ldots,T_{n}\mathtt{)}\\
+\mathtt{TASK\_IMPL(}RT,F,T_{1},V_{1},\ldots,T_{n},V_{n}\mathtt{)}\\
+\mathtt{VOID\_TASK\_IMPL(}F,T_{1},V_{1},\ldots,T_{n},V_{n}\mathtt{)}
+\end{array}
+\]
+
+\end_inset
+
+where 
+\begin_inset Formula $RT$
+\end_inset
+
+ is the return type, 
+\begin_inset Formula $F$
+\end_inset
+
+ is the task name, the 
+\begin_inset Formula $T_{i}$
+\end_inset
+
+ are the argument types, and the 
+\begin_inset Formula $V_{i}$
+\end_inset
+
+ are the argument names.
+ The declaration macro goes into the header file and the implementation
+ macro into the C file.
+ A task declaration can also be used in a single file program as a forward
+ declaration allowing mutually recursive tasks.
+ For convenience and compatibility, the old (
+\family typewriter
+VOID_
+\family default
+)
+\family typewriter
+TASK_
+\family default
+\emph on
+n
+\emph default
+ macros are still provided, each defined as a pair of a corresponding declaratio
+n and implementation.
+\end_layout
+
+\begin_layout Standard
+The non inlined functions defined by these macros are global, not static,
+ so you should avoid identically named tasks in the same program.
+\end_layout
+
 \begin_layout Subsection
 Main program
 \end_layout
 
 \begin_layout Standard
-The Wool library contains the 
+There are two possible program structures.
+\end_layout
+
+\begin_layout Subsubsection
+Main as task (a.k.a old style programs)
+\end_layout
+
+\begin_layout Standard
+In this style, the Wool library provides the 
 \family typewriter
 main
 \family default
- function, so it gets control at program start up.
+ function (in the source file 
+\family typewriter
+wool-main.c
+\family default
+), so it gets control at program start up.
  After initialization it invokes the task called 
 \family typewriter
 main
@@ -717,12 +851,151 @@ The library decodes a few flags controlling things like the number of workers
  the main task, so a Wool program can also have command line arguments.
 \end_layout
 
+\begin_layout Subsubsection
+Explicit initialization (a.k.a.
+ new style programs)
+\end_layout
+
+\begin_layout Standard
+In this style, 
+\family typewriter
+main()
+\family default
+ is an ordinary C function which explicitly starts and stops the Wool run-time
+ system using the following functions:
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+int wool_init(int argc, char **argv)
+\family default
+ which initializes the run time system using the supplied command line options
+ and returns the number of remaining arguments after eating the Wool options.
+ Remaining options are shifted to the front, so after the call, 
+\family typewriter
+argv
+\family default
+ can be used as if the Wool options had not been there and the return value
+ gives the number of remaining arguments.
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+void wool_fini(void)
+\family default
+ which stops the run time system, in particular it terminates the workers
+ and prints any statistics gathered to 
+\family typewriter
+stderr
+\family default
+.
+\end_layout
+
+\begin_layout Standard
+Sometimes it is inconvenient to decode options and then immediately start
+ Wool.
+ For instance if the application also is interested in the command line
+ arguments but has a lengthy initialization phase which should be done before
+ the run-time system starts, so that it is not covered by the timing information
+ collected by the run-time system.
+ For that reason the initialization of Wool can be split in two using the
+ following functions (in the order given here):
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+int wool_init_options(int argc, char **argv)
+\family default
+ which just decodes the supplied command line options and returns the number
+ of remaining arguments after eating the Wool options.
+ Remaining options are shifted to the front, so after the call, 
+\family typewriter
+argv
+\family default
+ can be used as if the Wool options had not been there and the return value
+ gives the number of remaining arguments.
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+void wool_init_start(void)
+\family default
+ which starts the run-time system (in particular the worker threads).
+\end_layout
+
+\begin_layout Subsection
+Additional library functions
+\end_layout
+
+\begin_layout Standard
+There are a few additional library functions that can be used, once the
+ library is initialized, to find out information about the way the program
+ runs.
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+int wool_get_nworkers(void)
+\family default
+ which returns the number of workers, including the root worker (the main
+ thread of the program).
+\end_layout
+
+\begin_layout Itemize
+
+\family typewriter
+int wool_get_worker_id(void)
+\family default
+ which returns the worker id of the worker running the current task, in
+ the interval 0 to 
+\begin_inset Formula $N-1$
+\end_inset
+
+ if there are 
+\begin_inset Formula $N$
+\end_inset
+
+ workers.
+ Note that the library must have been started (
+\family typewriter
+wool_init()
+\family default
+ or 
+\family typewriter
+wool_init_start()
+\family default
+) for it to be legal to call this function.
+ Note also that since Wool never moves a running task from one worker to
+ another, the return value should be stable; calling the function repeatedly
+ from the same task should yield the same value.
+\end_layout
+
 \begin_layout Section
 Running Wool Programs
 \end_layout
 
+\begin_layout Subsection
+Command line options
+\end_layout
+
 \begin_layout Standard
-The Wool library decodes the following flags controlling its operation:
+The Wool library functions 
+\family typewriter
+wool_init()
+\family default
+ and 
+\family typewriter
+wool_init_options()
+\family default
+ decode some flags which controls the operation of Wool.
+ Wool programs that pass the command line arguments to any of these functions
+ (in particular old style Wool programs do this) implement the following
+ flags, among others:
 \end_layout
 
 \begin_layout Description
@@ -731,40 +1004,8 @@ The Wool library decodes the following flags controlling its operation:
 \end_inset
 
 <n> Number of workers started.
- If this option is not given, it defaults to a single worker.
-\end_layout
-
-\begin_layout Description
--s
-\begin_inset space ~
-\end_inset
-
-<n> Number of stealable tasks in the task pool; only the oldest 
-\series bold
-n
-\series default
- tasks become stealable, decreasing overhead in recursive divide-and-conquer
- applications while potentially leading to loss of parallelism.
- If this option is not given, the default is 
-\begin_inset Formula $3+\log_{2}N$
-\end_inset
-
- where 
-\begin_inset Formula $N$
-\end_inset
-
- is the number of workers.
- If the work is well balanced, this gives about eight stealable tasks for
- each worker.
-\end_layout
-
-\begin_layout Description
--t
-\begin_inset space ~
-\end_inset
-
-<n> The (initial) size of the task pool of each worker.
- Defaults to 1000 tasks per pool.
+ If this option is not given, it defaults to one worker per processor in
+ the affinity set of the main thread.
 \end_layout
 
 \begin_layout Standard
@@ -775,6 +1016,33 @@ Decoding of options stops when an unknown option is found, and the rest
 main
 \family default
  task of the program.
+ Since there are several more flags implemented, it is best to give an argument-
+decoding Wool program a double dash (
+\family typewriter
+--
+\family default
+) before any options decoded by the program itself; Wool interprets a double
+ dash as end of its options.
+ 
+\end_layout
+
+\begin_layout Subsection
+Controlling the number of workers and their affinities
+\end_layout
+
+\begin_layout Standard
+By default, Wool runs one worker on each processor in the affinity set of
+ the main thread.
+ Each worker has its affinity set to a single processor.
+ Given that affinities are advisory rather than mandatory, it is not certain
+ that it will run on that processor, but it is very likely.
+ The main thread always runs worker 0, which gets the first processor in
+ the set, with subsequent workers getting subsequent processors, in order.
+ The Linux command 
+\family typewriter
+taskset
+\family default
+ can be used to control the affinity set of the main thread of the program.
 \end_layout
 
 \begin_layout Section
@@ -784,12 +1052,8 @@ Building the library
 \begin_layout Standard
 Currently, the library is built as an object file that is linked to the
  program (that is at least what the make file does).
- There is because the library itself defines the 
-\family typewriter
-main
-\family default
- function of the program; in addition, as the code is rather small and performan
-ce sensitive, the present strategy seems reasonable.
+ Since the code is rather small and performance sensitive, the present strategy
+ seems reasonable.
  
 \end_layout
 
@@ -862,8 +1126,8 @@ double
 \end_layout
 
 \begin_layout Description
-FINEST_GRAIN This controls the number of iterations executed as a loop at
- the leaves of a divide and conquer tree implementing a parallel loop.
+FINEST_GRAIN This controls the number of iterations executed sequentially
+ at the leaves of a divide and conquer tree implementing a parallel loop.
  Wool will use the 
 \begin_inset Formula $grainsize$
 \end_inset
@@ -1330,232 +1594,80 @@ and
  not much smaller than search, so do drop me an email!
 \end_layout
 
+\begin_layout Standard
+\begin_inset ERT
+status open
+
+\begin_layout Plain Layout
+
+
+\backslash
+appendix
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
 \begin_layout Section
-News in version 0.1.5
-\end_layout
-
-\begin_layout Standard
-Version 0.1.5 brings a number of improvements without changing the programming
- API.
- Here is a brief tour of the most important ones:
-\end_layout
-
-\begin_layout Subsection
-Root calls
-\end_layout
-
-\begin_layout Standard
-In earlier versions of Wool, a task could only be used (spawned, synced
- or called) from another task.
- This meant that the 
-\family typewriter
-main
-\family default
- function had to be a task, as described above (version 0.2, now obsolete,
- also lifted that restriction).
- From version 0.1.5, Wool now allows to use (
-\family typewriter
-SPAWN
-\family default
-, 
-\family typewriter
-CALL
-\family default
-, or 
-\family typewriter
-SYNC
-\family default
- with) tasks from any C function, although such calls will be slower since
- they need to recompute the task stack pointer and use operations of the
- underlying thread library (
-\family typewriter
-pthreads
-\family default
-) to find the per worker data structures.
- There is no change of syntax; the same macros are used in root as well
- as nested position.
-\end_layout
-
-\begin_layout Standard
-This change means that old style Wool programs, whether legacy code or newly
- written, need to be linked with the file 
-\family typewriter
-wool-main.o
-\family default
-, generated from 
-\family typewriter
-wool-main.c
-\family default
-, since the run-time system no longer defines 
-\family typewriter
-main()
-\family default
-.
- New style programs, on the other hand, need to start and stop the Wool
- run time system, so they should call the following functions:
-\end_layout
-
-\begin_layout Itemize
-
-\family typewriter
-int wool_init(int argc, char **argv)
-\family default
- which initializes the run time system using the supplied command line options
- and returns the number of remaining arguments after eating the Wool options.
- Remaining options are shifted to the front, so after the call, 
-\family typewriter
-argv
-\family default
- can be used as if the Wool options had not been there and the return value
- gives the number of remaining arguments.
-\end_layout
-
-\begin_layout Itemize
-
-\family typewriter
-void wool_fini(void)
-\family default
- which stops the run time system, in particular it terminates the workers
- and prints any statistics gathered to 
-\family typewriter
-stderr
-\family default
-.
-\end_layout
-
-\begin_layout Subsection
-Support for separate compilation
-\end_layout
-
-\begin_layout Standard
-In previous versions of Wool, a task had to be defined in the same file
- that it was used since there was no way of declaring the identifiers that
- a task definition creates.
- There was, so to speak, nothing to put in the header file.
- We have now split the functionality of the (
-\family typewriter
-VOID_
-\family default
-)
-\family typewriter
-TASK_
-\family default
-\emph on
-n
-\emph default
- macros into separate declaration and implementaion macros which take the
- form 
-\begin_inset Formula 
-\[
-\begin{array}{l}
-\mathtt{TASK\_DECL(}RT,F,T_{1},\ldots,T_{n}\mathtt{)}\\
-\mathtt{VOID\_TASK\_DECL(}F,T_{1},\ldots,T_{n}\mathtt{)}\\
-\mathtt{TASK\_IMPL(}RT,F,T_{1},V_{1},\ldots,T_{n},V_{n}\mathtt{)}\\
-\mathtt{VOID\_TASK\_IMPL(}F,T_{1},V_{1},\ldots,T_{n},V_{n}\mathtt{)}
-\end{array}
-\]
+License
+\begin_inset CommandInset label
+LatexCommand label
+name "sec:License"
 
 \end_inset
 
-where 
-\begin_inset Formula $RT$
-\end_inset
 
- is the return type, 
-\begin_inset Formula $F$
-\end_inset
+\end_layout
 
- is the task name, the 
-\begin_inset Formula $T_{i}$
-\end_inset
-
- are the argument types, and the 
-\begin_inset Formula $V_{i}$
-\end_inset
-
- are the argument names.
- The declaration macro goes into the header file and the implementation
- macro into the C file.
- A task declaration can also be used in a single file program as a forward
- declaration allowing mutually recursive tasks.
- For convenience and compatibility, the old (
+\begin_layout Standard
+Copyright 2009- Karl-Filip Faxén, 
 \family typewriter
-VOID_
+kff@sics.se
 \family default
-)
-\family typewriter
-TASK_
-\family default
-\emph on
-n
-\emph default
- macros are still provided, each defined as a pair of a corresponding declaratio
-n and implementation.
-\end_layout
-
-\begin_layout Standard
-The non inlined functions defined by these macros are global, not static,
- so you should avoid identically named tasks in the same program.
-\end_layout
-
-\begin_layout Subsection
-Reimplemented task stack
-\end_layout
-
-\begin_layout Standard
-The Wool task stack is now extensible, making the 
-\series bold
--t
-\series default
- run time flag obsolete.
-\end_layout
-
-\begin_layout Subsection
-Adaptive private/public boundary
-\end_layout
-
-\begin_layout Standard
-The number of public positions in the task queue (previously known as the
- 
-\begin_inset Quotes eld
-\end_inset
-
-stealable tasks
-\begin_inset Quotes erd
-\end_inset
-
-) is now adjusted at run time and should not be necessary to control manually.
- Thus the 
-\series bold
--s
-\series default
- run time flag is also obsolete.
-\end_layout
-
-\begin_layout Subsection
-Support for TilePRO64
-\end_layout
-
-\begin_layout Standard
-The Tilera manycore processor TilePRO64 is now supported.
-\end_layout
-
-\begin_layout Subsection
-Additional options
-\end_layout
-
-\begin_layout Standard
-There are many more options, both build time and run time.
- These are best left at their default values except by the seriously adventurous
- explorer.
- They are mainly concerned with tuning Wool to extract the last few percents
- of performance by controlling various arcane variations on the basic work
- stealing scheduler.
  
 \end_layout
 
 \begin_layout Standard
+All rights reserved.
+\end_layout
 
+\begin_layout Standard
+Redistribution and use in source and binary forms, with or without modification,
+ are permitted provided that the following conditions are met:
+\end_layout
+
+\begin_layout Itemize
+Redistributions of source code must retain the above copyright notice, this
+ list of conditions and the following disclaimer.
+\end_layout
+
+\begin_layout Itemize
+Redistributions in binary form must reproduce the above copyright notice,
+ this list of conditions and the following disclaimer in the documentation
+ and/or other materials provided with the distribution.
+\end_layout
+
+\begin_layout Itemize
+Neither "Wool" nor the names of its contributors may be used to endorse
+ or promote products derived from this software without specific prior written
+ permission.
+\end_layout
+
+\begin_layout Standard
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+ IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ PURPOSE ARE DISCLAIMED.
+ IN NO EVENT SHALL THE AUTHOR OR OTHER CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
+ USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
 \end_layout
 
 \end_body
