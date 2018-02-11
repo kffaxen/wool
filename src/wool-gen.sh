@@ -156,7 +156,7 @@ void NAME##_WRAP(Worker *__self, NAME##_TD *t);
 static inline __attribute__((__always_inline__))
 void NAME##_SPAWN(Worker *__self $FUN_a_FORMALS)
 {
-  Task* cached_top = __self->pr_top;
+  Task* cached_top = __self->pr.pr_top;
   const unsigned long _WOOL_max_align = $ARGS_MAX_ALIGN;
   const unsigned long _WOOL_(sss) = sizeof( __wool_task_common ) + _WOOL_max_align - 1;
   char *_WOOL_(p) = ((char *) cached_top) + _WOOL_(sss) - _WOOL_(sss) % _WOOL_max_align;
@@ -206,12 +206,12 @@ static inline __attribute__((__always_inline__))
 $RTYPE NAME##_SYNC(Worker *__self)
 {
   WOOL_WHEN_MSPAN( hrtime_t e_span; )
-  Task *jfp = __self->join_first_private;
-  Task *cached_top = __self->pr_top;
+  Task *jfp = __self->pr.join_first_private;
+  Task *cached_top = __self->pr.pr_top;
 
   if( MAKE_TRACE ||
       ( LOG_EVENTS &&
-      __self->curr_block_fidx + ( cached_top - __self->curr_block_base ) <= __self->n_public ) )
+      __self->pr.curr_block_fidx + ( cached_top - __self->pr.curr_block_base ) <= __self->pr.n_public ) )
   {
     logEvent( __self, 6 );
   }
@@ -223,7 +223,7 @@ $RTYPE NAME##_SYNC(Worker *__self)
     char *_WOOL_(p) = ((char *) t) + _WOOL_(sss) - _WOOL_(sss) % _WOOL_max_align;
     $RES_FIELD
 
-    __self->pr_top = cached_top;
+    __self->pr.pr_top = cached_top;
     PR_INC( __self, CTR_inlined );
 
     WOOL_MSPAN_BEFORE_INLINE( e_span, t );
@@ -275,19 +275,19 @@ void NAME##_WRAP(Worker *__self, NAME##_TD *t)
 
 Task *NAME##_PUB(Worker *self, Task *top, Task *jfp )
 {
-  unsigned long ps = self->public_size;
+  unsigned long ps = self->pr.public_size;
 
   WOOL_WHEN_AS( int us; )
 
   grab_res_t res = WOOL_FAST_EXC ? TF_EXC : TF_OCC;
 
   if(
-        ( WOOL_WHEN_AS_C( us = self->unstolen_stealable )
+        ( WOOL_WHEN_AS_C( us = self->pr.unstolen_stealable )
          __builtin_expect( (unsigned long) jfp - (unsigned long) top < ps, 1 ) )
          && __builtin_expect( WOOL_LS_TEST(us), 1 )
          && (res = _WOOL_(grab_in_sync)( self, (top)-1 ),
              (
-               WOOL_WHEN_AS_C( self->unstolen_stealable = us-1 )
+               WOOL_WHEN_AS_C( self->pr.unstolen_stealable = us-1 )
                __builtin_expect( res != TF_OCC, 1 ) ) )
    ) {
     /* Semi fast case */
@@ -296,7 +296,7 @@ Task *NAME##_PUB(Worker *self, Task *top, Task *jfp )
     const unsigned long _WOOL_(sss) = sizeof( __wool_task_common ) + _WOOL_max_align - 1;
     char *_WOOL_(p) = ((char *) t) + _WOOL_(sss) - _WOOL_(sss) % _WOOL_max_align;
 
-    self->pr_top = top;
+    self->pr.pr_top = top;
     PR_INC( self, CTR_inlined );
     $SAVE_RVAL NAME##_CALL( self $TASK_GET_FROM_p );
     return top;

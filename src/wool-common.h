@@ -563,7 +563,7 @@ typedef struct _Task {
   #endif
 #endif
 
-typedef struct _Worker {
+struct _Worker_private {
   // First cache line, private stuff often written by the owner
   unsigned long long ctr[CTR_MAX];
   volatile hrtime_t time;
@@ -607,8 +607,9 @@ typedef struct _Worker {
   int               thread_leader;
   volatile int      more_work;
   // added block_idx, array of block base
-  char pad2[ PAD( (_WOOL_pool_blocks+9)*P_SZ+5*sizeof(long)+2*sizeof(hrtime_t)+9*I_SZ+CTR_MAX*LL_SZ, LINE_SIZE ) ];
+};
 
+struct _Worker_public {
   // Second cache line, public stuff seldom written by the owner
   // These two ints are either the size of two pointers or one pointer
   volatile int            is_thief;    // Used with set and friends
@@ -628,8 +629,13 @@ typedef struct _Worker {
   wool_cond_t    work_available;
   workfun_t      fun;
   void           *fun_arg;
-  char      pad1[ PAD( 4*I_SZ+(6+_WOOL_pool_blocks)*P_SZ+2*sizeof(wool_lock_t)+sizeof(wool_cond_t), LINE_SIZE ) ];
+};
 
+typedef struct _Worker {
+  struct _Worker_private pr;
+  char pad1[PAD( sizeof(struct _Worker_private), LINE_SIZE )];
+  struct _Worker_public pu;
+  char pad2[PAD( sizeof(struct _Worker_public), LINE_SIZE )];
 } Worker;
 
 #if LOG_EVENTS
@@ -900,7 +906,7 @@ void _WOOL_(fast_spawn)( Worker *self, Task *cached_top, wrapper_t f )
   }
   #endif
 
-  assert( cached_top == self->pr_top );
+  assert( cached_top == self->pr.pr_top );
   assert( IN_CURRENT( self, cached_top ) );
 
   /*
@@ -926,7 +932,7 @@ void _WOOL_(fast_spawn)( Worker *self, Task *cached_top, wrapper_t f )
   #if _WOOL_ordered_stores
     /* We make no distinction between public and private spawn since no
        additional fences are needed for the public case */
-    if( cached_top < self->spawn_high ) {
+    if( cached_top < self->pr.spawn_high ) {
       /* Fast case, public and private */
       #if WOOL_DEFER_NOT_STOLEN && !SINGLE_FIELD_SYNC && !TWO_FIELD_SYNC
         cached_top->balarm = NOT_STOLEN;
@@ -940,12 +946,12 @@ void _WOOL_(fast_spawn)( Worker *self, Task *cached_top, wrapper_t f )
     }
   #else
     /* We now make a distinction since the public case need extra memory synchronization */
-    Task *sfp = self->spawn_first_private; // Might be used several times
+    Task *sfp = self->pr.spawn_first_private; // Might be used several times
    #if WOOL_INLINED_BOT_DEC
-    int dec_def = self->decrement_deferred;
+    int dec_def = self->pr.decrement_deferred;
    #endif
     if( __builtin_expect( ((unsigned long) cached_top - (unsigned long) sfp )
-			  < self->private_size, 1 ) ) {
+			  < self->pr.private_size, 1 ) ) {
       /* Fast case, private */
       cached_top->f = f;
       cached_top ++;
@@ -953,8 +959,8 @@ void _WOOL_(fast_spawn)( Worker *self, Task *cached_top, wrapper_t f )
       /* Semi fast case, public spawn */
       #if WOOL_INLINED_BOT_DEC
       if( __builtin_expect( dec_def, 0 ) ) {
-        self->dq_bot = self->curr_block_fidx + (cached_top - self->curr_block_base);
-        self->decrement_deferred = 0;
+        self->pu.dq_bot = self->pr.curr_block_fidx + (cached_top - self->pr.curr_block_base);
+        self->pr.decrement_deferred = 0;
       }
       #endif
       #if WOOL_DEFER_NOT_STOLEN && !SINGLE_FIELD_SYNC && !TWO_FIELD_SYNC
@@ -978,7 +984,7 @@ void _WOOL_(fast_spawn)( Worker *self, Task *cached_top, wrapper_t f )
       cached_top = _WOOL_(slow_spawn)( self, cached_top, f );
     }
   #endif
-  self->pr_top = cached_top;
+  self->pr.pr_top = cached_top;
 }
 
 static inline __attribute__((__always_inline__))
@@ -1045,11 +1051,11 @@ Worker* _WOOL_(get_self)( Worker* self, int in_task )
 
 #define SYNC( f )        ( f##_SYNC_DSP( (Worker *) __self, _WOOL_(in_task) ) )
 #define SYNC_ALL( f, m ) { WOOL_CONTEXT_CACHE; while ( GET_MARK() != m ) { SYNC( f ); } }
-#define GET_MARK()       ( _WOOL_(get_self)((Worker*) __self, _WOOL_(in_task))->pr_top )
+#define GET_MARK()       ( _WOOL_(get_self)((Worker*) __self, _WOOL_(in_task))->pr.pr_top )
 #define SPAWN( f, ... )  ( f##_SPAWN_DSP( (Worker *) __self, _WOOL_(in_task) ,##__VA_ARGS__ ) )
 #define CALL( f, ... )   ( f##_CALL_DSP( (Worker *) __self, _WOOL_(in_task) , ##__VA_ARGS__ ) )
 #define FOR( f, ... )    ( CALL( f##_TREE , ##__VA_ARGS__ ) )
-#define FREE_SPACE_PTR( f ) ( f##_FREE_SPACE( _WOOL_(get_self)((Worker*) __self, _WOOL_(in_task))->pr_top ) )
+#define FREE_SPACE_PTR( f ) ( f##_FREE_SPACE( _WOOL_(get_self)((Worker*) __self, _WOOL_(in_task))->pr.pr_top ) )
 #define FREE_SPACE_SIZE( f ) ( sizeof(Task) - (size_t) f##_FREE_SPACE((Task*) 0) )
 
 #define _WOOL_OFFCON( a, t, before ) ( __alignof__(t) > a ? sizeof(t) : \

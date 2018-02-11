@@ -188,7 +188,7 @@ int wool_get_nworkers(void)
 
 int wool_get_worker_id(void)
 {
-  return _WOOL_(slow_get_self)()->idx;
+  return _WOOL_(slow_get_self)()->pr.idx;
 }
 
 void work_for( workfun_t fun, void *arg )
@@ -198,11 +198,11 @@ void work_for( workfun_t fun, void *arg )
   for( i = 0; i < n_procs; i++ ) {
     // Skip locking against ourselves.
     if( i == idx) continue;
-    wool_lock( &( workers[i]->work_lock ) );
-    workers[i]->fun = fun;
-    workers[i]->fun_arg = arg;
-    wool_unlock( &( workers[i]->work_lock ) );
-    pthread_cond_signal( &( workers[i]->work_available ) );
+    wool_lock( &( workers[i]->pu.work_lock ) );
+    workers[i]->pu.fun = fun;
+    workers[i]->pu.fun_arg = arg;
+    wool_unlock( &( workers[i]->pu.work_lock ) );
+    pthread_cond_signal( &( workers[i]->pu.work_available ) );
   }
 }
 
@@ -570,7 +570,7 @@ static void sync_clocks( Worker *self )
   self->time = slave_time;
   COMPILER_FENCE;
   self->clock = 10;
-  for( i = self->idx; i < self->idx + workers_per_thread; i++ ) {
+  for( i = self->pr.idx; i < self->pr.idx + workers_per_thread; i++ ) {
     workers[i]->now = first_time;
   }
 }
@@ -644,22 +644,22 @@ static void maybe_sleep( Worker *self ) __attribute__((unused));
 
 static void maybe_sleep( Worker *self )
 {
-  pthread_mutex_lock( &(garage[self->idx].lck) );
+  pthread_mutex_lock( &(garage[self->pr.idx].lck) );
 
-  if( self->idx % workers_per_thread == 0 ) {
+  if( self->pr.idx % workers_per_thread == 0 ) {
     // I am a leader (jIDev)
   } else {
     // I am a follower, go to sleep (jIDevlu', jIQong)
-    self->is_running = 0;
+    self->pu.is_running = 0;
     #if WOOL_STEAL_SET || WOOL_STEAL_DKS
-      self->is_thief = 0;
+      self->pu.is_thief = 0;
     #endif
-    self->wait_for = NULL;
-    pthread_cond_wait( &(garage[self->idx].cnd), &(garage[self->idx].lck) );
+    self->pr.wait_for = NULL;
+    pthread_cond_wait( &(garage[self->pr.idx].cnd), &(garage[self->pr.idx].lck) );
 
-    self->is_running = 1;
+    self->pu.is_running = 1;
     #if WOOL_STEAL_SET || WOOL_STEAL_DKS
-      self->is_thief = 1;
+      self->pu.is_thief = 1;
     #endif
   }
 }
@@ -672,10 +672,10 @@ static void evacuate_garage(void)
   for( i = 1; i<n_workers; i++ ) {
     Worker *w = workers[i];
     // w will exit if is_running is true when it reads more_work in do_switch.
-    if( !w->is_running ) {
-      pthread_mutex_lock( &(garage[w->idx].lck) );
-        pthread_cond_signal( &(garage[w->idx].cnd) );
-      pthread_mutex_unlock( &(garage[w->idx].lck) );
+    if( !w->pu.is_running ) {
+      pthread_mutex_lock( &(garage[w->pr.idx].lck) );
+        pthread_cond_signal( &(garage[w->pr.idx].cnd) );
+      pthread_mutex_unlock( &(garage[w->pr.idx].lck) );
     }
   }
 }
@@ -692,40 +692,40 @@ static int do_switch( Worker *self, Worker *other, Task *t )
   //   ensuring that we return after resumption
   //   doing the context switch
 
-  if( other->is_running || pthread_mutex_trylock( &(garage[other->idx].lck) ) != 0 ) {
+  if( other->pu.is_running || pthread_mutex_trylock( &(garage[other->pr.idx].lck) ) != 0 ) { // TODO: public idx
     return 0;
   }
   // We've locked other
-  if( other->is_running ) {
-    pthread_mutex_unlock( &(garage[other->idx].lck) );
+  if( other->pu.is_running ) {
+    pthread_mutex_unlock( &(garage[other->pr.idx].lck) );
     return 0;
   }
   // It was available for waking; not anymore, though
-  other->is_running = 1; // Will soon be true, anyway
-  pthread_mutex_unlock( &(garage[other->idx].lck) );
+  other->pu.is_running = 1; // Will soon be true, anyway
+  pthread_mutex_unlock( &(garage[other->pr.idx].lck) );
 
   // Now we wake the other thread
-  pthread_cond_signal( &(garage[other->idx].cnd) );
+  pthread_cond_signal( &(garage[other->pr.idx].cnd) );
 
   // Now prepare to go to sleep
   #if WOOL_STEAL_SET || WOOL_STEAL_DKS
-    if( t==NULL ) self->is_thief = 0;
+    if( t==NULL ) self->pu.is_thief = 0;
   #endif
-  self->wait_for = t;
+  self->pr.wait_for = t;
 
   // Tell others I am available, effective when I release my lock
-  self->is_running = 0;
+  self->pu.is_running = 0;
 
   MFENCE;
 
   // jIQong
-  if( self->more_work )
-    pthread_cond_wait( &(garage[self->idx].cnd), &(garage[self->idx].lck) );
+  if( self->pr.more_work )
+    pthread_cond_wait( &(garage[self->pr.idx].cnd), &(garage[self->pr.idx].lck) );
 
   // Ok, now someone has woken us, better make it official
-  self->is_running = 1;
+  self->pu.is_running = 1;
   #if WOOL_STEAL_SET || WOOL_STEAL_DKS
-    if( t==NULL ) self->is_thief = 1;
+    if( t==NULL ) self->pu.is_thief = 1;
   #endif
 
   // We should tell caller we're done
@@ -736,14 +736,14 @@ static int do_switch( Worker *self, Worker *other, Task *t )
 static int look_for_worker_to_resume( Worker *self, Task *t, int from, int to )
 {
   int i;
-  int self_idx = self->idx;
+  int self_idx = self->pr.idx;
 
   for( i = from; i < to; i++ ) {
-    if( i != self_idx && workers[i]->wait_for != NULL ) {
+    if( i != self_idx && workers[i]->pr.wait_for != NULL ) {
      #if TWO_FIELD_SYNC
-      int is_done = workers[i]->wait_for->f == SFS_DONE; // No longer blocked in join
+      int is_done = workers[i]->pr.wait_for->f == SFS_DONE; // No longer blocked in join
      #else
-      int is_done = workers[i]->wait_for->balarm == STOLEN_DONE; // No longer blocked in join
+      int is_done = workers[i]->pr.wait_for->balarm == STOLEN_DONE; // No longer blocked in join
      #endif
       if( is_done && do_switch( self, workers[i], t ) ) {
         return 1;
@@ -758,7 +758,7 @@ static int switch_to_other_worker( Worker *, Task *, int ) __attribute__((unused
 
 static int switch_to_other_worker( Worker *self, Task *t, int migrate )
 {
-  int self_idx = self->idx;
+  int self_idx = self->pr.idx;
   int lead_worker;
   int i;
 
@@ -786,7 +786,7 @@ static int switch_to_other_worker( Worker *self, Task *t, int migrate )
   // Maybe we really should look at more workers here...
   //
   for( i = lead_worker; i < lead_worker+workers_per_thread; i++ ) {
-    if( i != self_idx && workers[i]->wait_for == NULL
+    if( i != self_idx && workers[i]->pr.wait_for == NULL
         && do_switch( self, workers[i], t )
       ) {
       return 1;
@@ -868,7 +868,7 @@ static int new_old_thief( Worker *self )
 
   wool_lock( &sleep_lock );
   if( old_thieves >= max_old_thieves + 2 ) {
-    while( self->more_work && old_thieves >= max_old_thieves + 2 ) {
+    while( self->pr.more_work && old_thieves >= max_old_thieves + 2 ) {
       wool_wait( &sleep_cond, &sleep_lock );
     }
     is_old = 0;
@@ -947,7 +947,7 @@ static int block_of_ptr( Worker *w, Task *t )
   int i;
 
   for( i = 0; i < _WOOL_pool_blocks; i++ ) {
-    if( (unsigned long) (t - w->block_base[i]) < block_size(i) ) {
+    if( (unsigned long) (t - w->pr.block_base[i]) < block_size(i) ) {
       return i;
     }
   }
@@ -957,19 +957,19 @@ static int block_of_ptr( Worker *w, Task *t )
 
 inline TILE_INLINE unsigned long ptr2idx_curr( Worker *w, Task *t )
 {
-  Task *base = w->curr_block_base;
+  Task *base = w->pr.curr_block_base;
   assert( t != NULL );
   assert( t >= base );
-  assert( t < base + block_size(w->t_idx) );
-  return w->curr_block_fidx + t - base;
+  assert( t < base + block_size(w->pr.t_idx) );
+  return w->pr.curr_block_fidx + t - base;
 }
 
 // Currently unused
 #if 0
 static Task *idx2ptr_curr( Worker *w, unsigned long t )
 {
-  Task **blocks = &(w->block_base[0]);
-  int    idx = w->t_idx;
+  Task **blocks = &(w->pr.block_base[0]);
+  int    idx = w->pr.t_idx;
   return blocks[idx] + t - start_idx_of_block(idx);
 }
 #endif
@@ -1001,14 +1001,14 @@ static inline Task *idx_to_task_p_pu( Worker *w, unsigned long t, Task *b )
     return b+t;
   }
   bidx = block_of_idx( t );
-  bb = w->pu_block_base[bidx];
+  bb = w->pu.pu_block_base[bidx];
   return bb==NULL ? NULL : bb + ( t - start_idx_of_block( bidx ) );
 }
 
 static Task *idx_to_task_p( Worker *w, unsigned long t )
 {
   int bidx = block_of_idx( t );
-  Task *bb = w->block_base[bidx];
+  Task *bb = w->pr.block_base[bidx];
 
   return bb==NULL ? NULL : bb + ( t - start_idx_of_block( bidx ) );
 }
@@ -1018,9 +1018,9 @@ static Task *idx_to_task_p( Worker *w, unsigned long t )
 static void throw_spawn_exception(Worker *w)
 {
   #if _WOOL_ordered_stores
-    w->spawn_high = NULL;
+    w->pr.spawn_high = NULL;
   #else
-    w->spawn_first_private = NULL;
+    w->pr.spawn_first_private = NULL;
   #endif
 }
 
@@ -1028,7 +1028,7 @@ static void throw_spawn_exception(Worker *w)
 // more public tasks.
 static void throw_both_exceptions(Worker *w)
 {
-  w->join_first_private = LARGE_POINTER;
+  w->pr.join_first_private = LARGE_POINTER;
   throw_spawn_exception( w );
 }
 
@@ -1100,22 +1100,22 @@ static int steal_margin = 1; // Must be at least one
 
 static void more_stealable( Worker *w, unsigned long p_idx )
 {
-  unsigned long now  = w->n_public;
+  unsigned long now  = w->pr.n_public;
   unsigned long next = now + stealable_chunk_size;
   unsigned long i;
 
   logEvent(w,10);
 
-  w->more_public_wanted = 0;  // Nobody else will set it until the wire is enabled
+  w->pr.more_public_wanted = 0;  // Nobody else will set it until the wire is enabled
 
   // At this point, a thief might set more_public_wanted and raise an exception,
   // and we'll catch that in reset_all_derived()
 
-  w->unstolen_stealable = unstolen_per_decrement;
-  w->n_public = next;
+  w->pr.unstolen_stealable = unstolen_per_decrement;
+  w->pr.n_public = next;
 
   // We also have a public version of n_public to avoid false sharing
-  w->pu_n_public = next;
+  w->pu.pu_n_public = next;
 
   SFENCE;
 
@@ -1144,7 +1144,7 @@ static void more_stealable( Worker *w, unsigned long p_idx )
 
 static inline int maybe_more_stealable( Worker *self, unsigned long p_idx )
 {
-  if( self->more_public_wanted ) {
+  if( self->pr.more_public_wanted ) {
     more_stealable( self, p_idx );
     return 1;
   } else {
@@ -1170,7 +1170,7 @@ static void synchronized_privatize( volatile Task *t )
 static void less_stealable(Worker *self, Task *q )
 {
   long unsigned top_idx = ptr2idx_curr( self, q );
-  long unsigned curr = self->n_public,
+  long unsigned curr = self->pr.n_public,
                 next,i;
   long unsigned high;
 
@@ -1181,12 +1181,12 @@ static void less_stealable(Worker *self, Task *q )
      be top_idx+steal_margin, which must be less than the old value
   */
 
-  high = self->highest_bot;
-  high = high < self->dq_bot ? self->dq_bot : self->highest_bot;
-  self->highest_bot = 0;
+  high = self->pr.highest_bot;
+  high = high < self->pu.dq_bot ? self->pu.dq_bot : self->pr.highest_bot;
+  self->pr.highest_bot = 0;
 
   if( curr <= top_idx + steal_margin || curr <= high ) {
-    self->unstolen_stealable = unstolen_per_decrement;
+    self->pr.unstolen_stealable = unstolen_per_decrement;
     return;
   }
 
@@ -1203,14 +1203,14 @@ static void less_stealable(Worker *self, Task *q )
     synchronized_privatize( t );
   }
 
-  self->n_public = next;
-  self->pu_n_public = next;
-  self->unstolen_stealable = unstolen_per_decrement;
+  self->pr.n_public = next;
+  self->pu.pu_n_public = next;
+  self->pr.unstolen_stealable = unstolen_per_decrement;
 }
 
 static inline void maybe_less_stealable( Worker *self, Task *p )
 {
-  if( self->unstolen_stealable <= 0 ) {
+  if( self->pr.unstolen_stealable <= 0 ) {
     less_stealable( self, p );
   }
 }
@@ -1222,7 +1222,7 @@ maybe_request_stealable( Worker *victim, unsigned long b_idx, unsigned long pub 
 {
     #if 1 && WOOL_ADD_STEALABLE
     if( b_idx >= pub-1 ) {
-      victim->more_public_wanted = 1;
+      victim->pr.more_public_wanted = 1;
       SFENCE;
       throw_both_exceptions( victim );
     }
@@ -1250,9 +1250,9 @@ static void init_block( Task *base, unsigned long size, long public_tasks )
 
 /*
     The canonical representation of the task pool of worker w is
-      w->block_base[0..]  // the blocks of the pool
-      w->t_idx            // the index of the block containing top
-      w->dq_bot           // the number of stolen tasks in the pool
+      w->pr.block_base[0..]  // the blocks of the pool
+      w->pr.t_idx            // the index of the block containing top
+      w->pu.dq_bot           // the number of stolen tasks in the pool
       w->n_public         // the number of public tasks in the pool
 
     From these values, the following values are computed, to be used primarily
@@ -1272,10 +1272,10 @@ static void init_block( Task *base, unsigned long size, long public_tasks )
 
 static void reset_all_derived( Worker *w, int maybe_skip )
 {
-  int           idx   = w->t_idx;
-  Task         *base  = w->block_base[idx];
+  int           idx   = w->pr.t_idx;
+  Task         *base  = w->pr.block_base[idx];
   unsigned long bsize = block_size(idx);
-  unsigned long pub   = new_local_public_size( idx, w->n_public );
+  unsigned long pub   = new_local_public_size( idx, w->pr.n_public );
   Task         *jfp   = base + ( pub / sizeof(Task) );
   #if _WOOL_ordered_stores
     Task *sph = base + bsize - 1;
@@ -1283,31 +1283,31 @@ static void reset_all_derived( Worker *w, int maybe_skip )
     unsigned long ps = sizeof(Task) * ( bsize-1 ) - pub;
   #endif
 
-  if( maybe_skip && w->public_size == pub && w->join_first_private == jfp &&
+  if( maybe_skip && w->pr.public_size == pub && w->pr.join_first_private == jfp &&
   #if _WOOL_ordered_stores
-    w->spawn_high == sph
+    w->pr.spawn_high == sph
   #else
-    w->spawn_first_private == jfp
+    w->pr.spawn_first_private == jfp
   #endif
   ) {
     return;
   }
 
-  w->public_size = pub;
-  w->join_first_private = jfp;
+  w->pr.public_size = pub;
+  w->pr.join_first_private = jfp;
   #if _WOOL_ordered_stores
-    w->spawn_high = sph;
+    w->pr.spawn_high = sph;
   #else
-    w->private_size = ps;
-    w->spawn_first_private = jfp;
+    w->pr.private_size = ps;
+    w->pr.spawn_first_private = jfp;
   #endif
   MFENCE;
-  if( w->more_public_wanted ) {
+  if( w->pr.more_public_wanted ) {
     throw_both_exceptions( w );
-  } else if( w->decrement_deferred ) {
+  } else if( w->pr.decrement_deferred ) {
     throw_spawn_exception( w );
   }
-  w->privatizing_bound = base + ( pub / sizeof(Task) ) - steal_margin;
+  w->pr.privatizing_bound = base + ( pub / sizeof(Task) ) - steal_margin;
 }
 
 Task *_WOOL_(slow_spawn)( Worker *self, Task *p, wrapper_t f )
@@ -1320,7 +1320,7 @@ Task *_WOOL_(slow_spawn)( Worker *self, Task *p, wrapper_t f )
      The parameter 'f' is the header of the task, to be appropriately stored
   */
   Task *next_free = p+1;
-  int idx         = self->t_idx;
+  int idx         = self->pr.t_idx;
   long unsigned p_idx = ptr2idx_curr(self,p);
 
   // fprintf( stderr, "+" );
@@ -1328,10 +1328,10 @@ Task *_WOOL_(slow_spawn)( Worker *self, Task *p, wrapper_t f )
   PR_INC(self, CTR_slow_spawns);
 
   #if WOOL_DEFER_BOT_DEC
-    if( self->decrement_deferred ) {
-      if( SINGLE_FIELD_SYNC || TWO_FIELD_SYNC || !WOOL_STEAL_NOLOCK || self->dq_bot > p_idx ) {
-        self->decrement_deferred = 0;
-        self->dq_bot = p_idx;
+    if( self->pr.decrement_deferred ) {
+      if( SINGLE_FIELD_SYNC || TWO_FIELD_SYNC || !WOOL_STEAL_NOLOCK || self->pu.dq_bot > p_idx ) {
+        self->pr.decrement_deferred = 0;
+        self->pu.dq_bot = p_idx;
       }
     } else {
       /* PR_INC( self, CTR_sync_no_dec ); */
@@ -1343,7 +1343,7 @@ Task *_WOOL_(slow_spawn)( Worker *self, Task *p, wrapper_t f )
       STORE_WRAPPER_REL(p->f, f);
     } else {
       p->f = f;
-      if( p_idx < self->n_public ) {
+      if( p_idx < self->pr.n_public ) {
         #if WOOL_BALARM_CACHING
           STORE_BALARM_T_REL(p->balarm, f);
         #else
@@ -1360,29 +1360,29 @@ Task *_WOOL_(slow_spawn)( Worker *self, Task *p, wrapper_t f )
 
   maybe_more_stealable( self, p_idx );
 
-  if( next_free >= self->block_base[idx] + block_size(idx) ) {
+  if( next_free >= self->pr.block_base[idx] + block_size(idx) ) {
     // Make a new block
     unsigned long n_tasks = block_size(++idx);
     unsigned long s_idx = start_idx_of_block( idx );
-    unsigned long n_public = self->n_public;
+    unsigned long n_public = self->pr.n_public;
 
     if( idx == _WOOL_pool_blocks ) {
       fprintf( stderr, "Out of space for task stack\n" );
       exit(1);
     }
-    self->t_idx = idx;
-    if( self->block_base[idx] == NULL ) {
-      // fprintf( stderr, "%d %d\n", self->idx, idx );
-      self->block_base[idx] = (Task *) alloc_aligned( n_tasks * sizeof(Task), AA_HERE );
-      init_block( self->block_base[idx], n_tasks,
+    self->pr.t_idx = idx;
+    if( self->pr.block_base[idx] == NULL ) {
+      // fprintf( stderr, "%d %d\n", self->pr.idx, idx );
+      self->pr.block_base[idx] = (Task *) alloc_aligned( n_tasks * sizeof(Task), AA_HERE );
+      init_block( self->pr.block_base[idx], n_tasks,
                   s_idx < n_public ? n_public - s_idx : 0 );
       SFENCE;
-      self->pu_block_base[idx] = self->block_base[idx];
+      self->pu.pu_block_base[idx] = self->pr.block_base[idx];
     }
-    next_free = self->block_base[idx];
+    next_free = self->pr.block_base[idx];
     // Support fast conversion of pointer to index
-    self->curr_block_fidx = start_idx_of_block( idx );
-    self->curr_block_base = self->block_base[idx];
+    self->pr.curr_block_fidx = start_idx_of_block( idx );
+    self->pr.curr_block_base = self->pr.block_base[idx];
   }
   reset_all_derived( self, 1 );
 
@@ -1392,45 +1392,45 @@ Task *_WOOL_(slow_spawn)( Worker *self, Task *p, wrapper_t f )
 
 static Task *push_task( Worker *self, Task *p )
 {
-  int idx = self->t_idx;
+  int idx = self->pr.t_idx;
 
-  if( p < self->block_base[idx]+block_size(idx)-1 ) {
-    self->pr_top = p+1;
+  if( p < self->pr.block_base[idx]+block_size(idx)-1 ) {
+    self->pr.pr_top = p+1;
     return p+1;
   } else {
     Task *tmp;
-    assert( self->block_base[idx+1] != NULL );
+    assert( self->pr.block_base[idx+1] != NULL );
 
-    self->t_idx = idx+1;
-    tmp = self->block_base[idx+1];
-    self->pr_top = tmp;
-    self->curr_block_base = tmp;
-    self->curr_block_fidx = start_idx_of_block( idx+1 );
+    self->pr.t_idx = idx+1;
+    tmp = self->pr.block_base[idx+1];
+    self->pr.pr_top = tmp;
+    self->pr.curr_block_base = tmp;
+    self->pr.curr_block_fidx = start_idx_of_block( idx+1 );
     reset_all_derived( self, 1 );
-    return self->pr_top;
+    return self->pr.pr_top;
   }
 }
 
 static void pop_task( Worker *self, Task *p )
 {
-  Task *base = self->curr_block_base;
+  Task *base = self->pr.curr_block_base;
 
   if( p > base ) {
      p--;
   } else {
-    int idx = self->t_idx - 1;  // Index of the *new* block we're poping into
+    int idx = self->pr.t_idx - 1;  // Index of the *new* block we're poping into
 
     assert( idx >= 0 );
 
-    base = self->block_base[idx];
-    self->t_idx = idx;
-    self->curr_block_base = base;
-    self->curr_block_fidx = start_idx_of_block( idx );
+    base = self->pr.block_base[idx];
+    self->pr.t_idx = idx;
+    self->pr.curr_block_base = base;
+    self->pr.curr_block_fidx = start_idx_of_block( idx );
     reset_all_derived( self, 1 );
 
     p = base + block_size(idx); // p is set to the very last element of the new block
   }
-  self->pr_top = p;
+  self->pr.pr_top = p;
 }
 
 #if THE_SYNC
@@ -1485,7 +1485,7 @@ static int trans_leap( Worker *self, wrapper_t card, volatile Task *orig, unsign
   for( i=0; i<n; i++ ) {
     seen[i] = 0;
   }
-  seen[self->idx] = 1;
+  seen[self->pr.idx] = 1;
 
   do {
     int do_pop = 0;
@@ -1495,7 +1495,7 @@ static int trans_leap( Worker *self, wrapper_t card, volatile Task *orig, unsign
     // When we get here, we have already attempted a steal from the worker owning this
     // pool.
 
-    if( thief_base >= thief->dq_bot ) {
+    if( thief_base >= thief->pu.dq_bot ) {
       // We have looked at all eligible tasks in this worker's task pool, so pop
       // back into previous worker
 
@@ -1505,7 +1505,7 @@ static int trans_leap( Worker *self, wrapper_t card, volatile Task *orig, unsign
 
       // We're going to look at a task in the pool of the current thief
 
-      volatile Task      *t = idx_to_task_p_pu( thief, thief_base, thief->pu_block_base[0] );
+      volatile Task      *t = idx_to_task_p_pu( thief, thief_base, thief->pu.pu_block_base[0] );
       wrapper_t           r = t->f;
       unsigned long new_ssn = t->ssn;
 
@@ -1689,9 +1689,9 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
       long nfail = 0;
       Worker *thief = workers[thief_idx];
       Task *tp1 = push_task( self, (Task *) t );
-      int trlf_threshold = self->trlf_threshold;
+      int trlf_threshold = self->pr.trlf_threshold;
       int trlf_timer = trlf_threshold;
-      int self_idx = self->idx;
+      int self_idx = self->pr.idx;
       wrapper_t card = SFS_STOLEN( MAKE_THIEF_INFO( self_idx, ptr2idx_curr( self, tp1 ) ) );
 
       assert( thief_idx <= n_workers );
@@ -1709,7 +1709,7 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
       // logEvent( self, thief_idx+20 );
       time_event( self, 3 );
       #if 0 // WOOL_STEAL_SET /* || WOOL_STEAL_DKS */
-        self->is_thief = 1;
+        self->pu.is_thief = 1;
       #endif
 
       do {
@@ -1727,7 +1727,7 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
             trlf_threshold = trlf_threshold*3 + 1;
             trlf_timer = trlf_threshold;
           }
-          self->trlf_threshold = trlf_threshold;
+          self->pr.trlf_threshold = trlf_threshold;
           if( steal_outcome == SO_CL ) {
             steal_outcome = SO_STOLE;
           }
@@ -1774,32 +1774,32 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
 #endif
 
     if( a != INLINED ) {
-      assert( self->curr_block_base <= t );
+      assert( self->pr.curr_block_base <= t );
       t_idx = ptr2idx_curr( self, (Task *) t );
       #if ! WOOL_DEFER_BOT_DEC
-        if( !WOOL_FIXED_STEAL && ( ! WOOL_STEAL_OO || self->dq_bot > t_idx )  ) {
-          if( WOOL_ADD_STEALABLE && self->highest_bot < t_idx+1 ) {
-            self->highest_bot = t_idx+1;
+        if( !WOOL_FIXED_STEAL && ( ! WOOL_STEAL_OO || self->pu.dq_bot > t_idx )  ) {
+          if( WOOL_ADD_STEALABLE && self->pr.highest_bot < t_idx+1 ) {
+            self->pr.highest_bot = t_idx+1;
           }
-          self->dq_bot = t_idx;
+          self->pu.dq_bot = t_idx;
         } else {
           PR_INC( self, CTR_sync_no_dec );
         }
       #else
         if( WOOL_DEFER_BOT_DEC_OPT &&
-            t == self->block_base[0] &&
-            ( ! WOOL_STEAL_OO || self->dq_bot > t_idx ) )
+            t == self->pr.block_base[0] &&
+            ( ! WOOL_STEAL_OO || self->pu.dq_bot > t_idx ) )
         {
-          if( WOOL_ADD_STEALABLE && self->highest_bot < t_idx+1 ) {
-            self->highest_bot = t_idx+1;
+          if( WOOL_ADD_STEALABLE && self->pr.highest_bot < t_idx+1 ) {
+            self->pr.highest_bot = t_idx+1;
           }
-          self->dq_bot = t_idx;
-          self->decrement_deferred = 0;
-        } else if( !self->decrement_deferred ) {
-          if( WOOL_ADD_STEALABLE && self->highest_bot < t_idx+1 ) {
-            self->highest_bot = t_idx+1;
+          self->pu.dq_bot = t_idx;
+          self->pr.decrement_deferred = 0;
+        } else if( !self->pr.decrement_deferred ) {
+          if( WOOL_ADD_STEALABLE && self->pr.highest_bot < t_idx+1 ) {
+            self->pr.highest_bot = t_idx+1;
           }
-          self->decrement_deferred = 1;
+          self->pr.decrement_deferred = 1;
           if( ! WOOL_INLINED_BOT_DEC ) {
             throw_spawn_exception( self);
           }
@@ -1840,32 +1840,32 @@ Task *_WOOL_(new_slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
   maybe_less_stealable( self, p );
 #endif
 
-  if( __builtin_expect( self->curr_block_base < p, 1 ) ) {
+  if( __builtin_expect( self->pr.curr_block_base < p, 1 ) ) {
     // No pop out of block
     p--;
   } else {
     // Now we pop back into a lower block
-    self->t_idx --;
+    self->pr.t_idx --;
     // Support fast conversion of pointer to index
-    self->curr_block_fidx = start_idx_of_block( self->t_idx );
-    self->curr_block_base = self->block_base[self->t_idx];
+    self->pr.curr_block_fidx = start_idx_of_block( self->pr.t_idx );
+    self->pr.curr_block_base = self->pr.block_base[self->pr.t_idx];
 
     // set p to point at the last task descriptor in that block
-    p = self->block_base[self->t_idx] + block_size(self->t_idx) - 1;
+    p = self->pr.block_base[self->pr.t_idx] + block_size(self->pr.t_idx) - 1;
   }
   // now recompute sizes etc, resetting both exceptions
   reset_all_derived( self, 1 );
 
 #if TWO_FIELD_SYNC && WOOL_FAST_EXC
   } else {
-    assert( p > self->curr_block_base );
+    assert( p > self->pr.curr_block_base );
     p--;
   }
 #endif
 
-  self->pr_top = p;
+  self->pr.pr_top = p;
   // if p points at a public task, we join with it, otherwise inline it
-  if( p_idx-1 < self->n_public ) {
+  if( p_idx-1 < self->pr.n_public ) {
     _WOOL_(rts_sync)( self, p, grab_res );
   } else {
     wrapper_t f = p->f;
@@ -1876,7 +1876,7 @@ Task *_WOOL_(new_slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
     // p->f = SFS_EMPTY; /* Temporary */
     GET_TASK(f)( self, p );
   }
-  assert( self->pr_top == p );
+  assert( self->pr.pr_top == p );
 
   return p;
 }
@@ -1901,57 +1901,57 @@ static void init_worker( int w_idx )
       ( ( (char *) alloc_aligned( sizeof(Worker) + size + offset, AA_HERE ) ) + offset );
   w = &(d->w);
 
-  w->dq_base = &(d->p[0]);
-  bases[w_idx] = w->dq_base;
-  w->flag = w_idx == 0 ? 1 : 0;
-  w->is_running = THREAD_GARAGE ? 1 : 0;
-  w->thread_leader = -1;
-  w->more_work = 2;
-  init_block( w->dq_base, first_block_size, (long) n_stealable );
-  w->block_base[0] = w->dq_base;
-  w->pu_block_base[0] = w->dq_base;
+  w->pr.dq_base = &(d->p[0]);
+  bases[w_idx] = w->pr.dq_base;
+  w->pu.flag = w_idx == 0 ? 1 : 0;
+  w->pu.is_running = THREAD_GARAGE ? 1 : 0;
+  w->pr.thread_leader = -1;
+  w->pr.more_work = 2;
+  init_block( w->pr.dq_base, first_block_size, (long) n_stealable );
+  w->pr.block_base[0] = w->pr.dq_base;
+  w->pu.pu_block_base[0] = w->pr.dq_base;
   for( i = 1; i < _WOOL_pool_blocks; i++ ) {
-    w->block_base[i] = NULL;
+    w->pr.block_base[i] = NULL;
   }
-  w->t_idx = 0;
+  w->pr.t_idx = 0;
 
-  w->curr_block_fidx = 0;
-  w->curr_block_base = w->dq_base;
+  w->pr.curr_block_fidx = 0;
+  w->pr.curr_block_base = w->pr.dq_base;
 
-  w->dq_bot = 0;
-  w->ssn = 1;
-  w->n_public = n_stealable;
-  w->pu_n_public = n_stealable;
-  w->storage = NULL;
-  w->privatizing_bound = LARGE_POINTER;
-  w->highest_bot = 0;
-  w->dq_lock = &( w->the_lock );
-  pthread_mutex_init( w->dq_lock, NULL );
-  pthread_mutex_init( &( w->work_lock ), NULL );
-  pthread_cond_init( &( w->work_available ), NULL );
-  w->fun = NULL;
-  w->fun_arg = NULL;
+  w->pu.dq_bot = 0;
+  w->pu.ssn = 1;
+  w->pr.n_public = n_stealable;
+  w->pu.pu_n_public = n_stealable;
+  w->pr.storage = NULL;
+  w->pr.privatizing_bound = LARGE_POINTER;
+  w->pr.highest_bot = 0;
+  w->pu.dq_lock = &( w->pu.the_lock );
+  pthread_mutex_init( w->pu.dq_lock, NULL );
+  pthread_mutex_init( &( w->pu.work_lock ), NULL );
+  pthread_cond_init( &( w->pu.work_available ), NULL );
+  w->pu.fun = NULL;
+  w->pu.fun_arg = NULL;
   for( i=0; i < CTR_MAX; i++ ) {
-    w->ctr[i] = 0;
+    w->pr.ctr[i] = 0;
   }
-  w->idx = w_idx;
-  w->clock = 0;
+  w->pr.idx = w_idx;
+  w->pr.clock = 0;
 #if WOOL_PIE_TIMES
-  w->time = gethrtime();
+  w->pr.time = gethrtime();
 #else
-  w->time = 0;
+  w->pr.time = 0;
 #endif
-  w->decrement_deferred = 0;
-  w->more_public_wanted = 0;
-  w->unstolen_stealable = unstolen_per_decrement;
-  w->pr_top = w->block_base[0];
-  w->trlf_threshold = global_trlf_threshold;
+  w->pr.decrement_deferred = 0;
+  w->pr.more_public_wanted = 0;
+  w->pr.unstolen_stealable = unstolen_per_decrement;
+  w->pr.pr_top = w->pr.block_base[0];
+  w->pr.trlf_threshold = global_trlf_threshold;
   #if LOG_EVENTS
-    logbuff[w->idx] = malloc( 6000000 * sizeof( LogEntry ) );
-    w->logptr = logbuff[w->idx];
+    logbuff[w->pr.idx] = malloc( 6000000 * sizeof( LogEntry ) );
+    w->pr.logptr = logbuff[w->pr.idx];
   #endif
-  w->is_thief = 0;
-  w->wait_for = NULL;
+  w->pu.is_thief = 0;
+  w->pr.wait_for = NULL;
 
   reset_all_derived( w, 0 );
 
@@ -2095,7 +2095,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
 #endif
 
 #if WOOL_FIXED_STEAL
-  int self_idx = self->idx;
+  int self_idx = self->pr.idx;
   int b = bits( self_idx );
 
   int victim_idx = self_idx - (1 << (b-1));
@@ -2108,7 +2108,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
     //  po0-kyrurew79,kiyyyyyu8767uuhk,.ttttttttt
 
   FAST_TIME(t_start);
-  logEvent( self, 100 + (*victim_p)->idx );
+  logEvent( self, 100 + (*victim_p)->pr.idx );
 
 #if WOOL_STEAL_PARSAMP && TWO_FIELD_SYNC
  // if(jt==NULL) {
@@ -2116,14 +2116,14 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
   victim0 = victim_p[0];
   victim1 = victim_p[1];
 
-  bot_idx0  = victim0->dq_bot;
-  flag0     = victim0->flag;               // The depth of the task at the base of the stack
-  is_thief0 = victim0->is_thief;
-  base0     = victim0->pu_block_base[0];
-  bot_idx1  = victim1->dq_bot;
-  flag1     = victim1->flag;               // The depth of the task at the base of the stack
-  is_thief1 = victim1->is_thief;
-  base1     = victim1->pu_block_base[0];
+  bot_idx0  = victim0->pu.dq_bot;
+  flag0     = victim0->pu.flag;               // The depth of the task at the base of the stack
+  is_thief0 = victim0->pu.is_thief;
+  base0     = victim0->pu.pu_block_base[0];
+  bot_idx1  = victim1->pu.dq_bot;
+  flag1     = victim1->pu.flag;               // The depth of the task at the base of the stack
+  is_thief1 = victim1->pu.is_thief;
+  base1     = victim1->pu.pu_block_base[0];
 
   tp0 = idx_to_task_p_pu( victim0, bot_idx0, base0 );
   tp1 = idx_to_task_p_pu( victim1, bot_idx1, base1 );
@@ -2184,12 +2184,12 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
 
   FAST_TIME(t_vread);
 
-  is_thief = victim->is_thief;
+  is_thief = victim->pu.is_thief;
 #if WOOL_FIXED_STEAL
-  tp = victim->dq_base + idx; // idx must be less than size of first block!
+  tp = victim->pr.dq_base + idx; // idx must be less than size of first block!
 #else
-  bot_idx = victim->dq_bot;
-  base    = victim->pu_block_base[0];
+  bot_idx = victim->pu.dq_bot;
+  base    = victim->pu.pu_block_base[0];
   if( bot_idx < first_block_size ) {
     tp = base + bot_idx;
   } else {
@@ -2223,7 +2223,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
   FAST_TIME(t_peek);
 #else
   // This version assumes that we use locks
-  if( tp->balarm != NOT_STOLEN || tp->f <= T_LAST || !( bot_idx < victim->pu_n_public ) ) {
+  if( tp->balarm != NOT_STOLEN || tp->f <= T_LAST || !( bot_idx < victim->pu.pu_n_public ) ) {
     time_event( self, 7 );
     return SO_NO_WORK;
   }
@@ -2231,7 +2231,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
 
 #else
   // neither peek nor sfs or tfs
-  if( ! ( bot_idx < victim->pu_n_public ) ) {
+  if( ! ( bot_idx < victim->pu.pu_n_public ) ) {
     time_event( self, 7 );
     return SO_NO_WORK;
   }
@@ -2254,7 +2254,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
   // but only if we use locks!
 
     // Yes, we need to reread after aquiring lock!
-    bot_idx = victim->dq_bot;
+    bot_idx = victim->pu.dq_bot;
     tp = idx_to_task_p_pu( victim, bot_idx, base );
     if( tp == NULL ) {
       wool_unlock( victim->dq_lock );
@@ -2273,7 +2273,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
     // while we were obtaining the lock;
     // no point in getting exclusive access in that case.
     if( WOOL_STEAL_NOLOCK ||
-        ( bot_idx < victim->pu_n_public && tp->balarm == (balarm_t) NOT_STOLEN
+        ( bot_idx < victim->pu.pu_n_public && tp->balarm == (balarm_t) NOT_STOLEN
                         && tp->f > (wrapper_t) T_LAST  ) ) {
 #if THE_SYNC
       // THE version, uses locks between thieves (ie !WOOL_STEAL_NOLOCK)
@@ -2282,7 +2282,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
       f = tp->f;
 
       if( f > T_LAST ) {  // Check again after the fence!
-        victim->dq_bot = bot_idx+1;
+        victim->pu.dq_bot = bot_idx+1;
       } else {
         tp->balarm = NOT_STOLEN;
         tp = NULL;
@@ -2302,13 +2302,13 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
           __builtin_prefetch( tp );
         #endif
         if( ( !_WOOL_ordered_stores || SFS_IS_TASK( f ))
-             && __builtin_expect( victim->dq_bot == bot_idx, 1 )
+             && __builtin_expect( victim->pu.dq_bot == bot_idx, 1 )
              && (__builtin_expect( jt == NULL, 1 )
                  || ( tmp_ssn = jt->ssn, __builtin_expect( jt->f != SFS_DONE, 1 )
                    && __builtin_expect( tmp_ssn == ssn, 1 ) ) ) ) {
           // _wool_unbundled_mf(); // If the exchange does not have mf semantics, we do an mf
           FAST_TIME(t_post_t);
-          victim->dq_bot = bot_idx+1;
+          victim->pu.dq_bot = bot_idx+1;
           tp->f = card;
           #if WOOL_TRLF
             tp->ssn = booty_ssn+1;
@@ -2333,7 +2333,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
         f = _wool_exch_busy( &(tp->f) );
         COMPILER_FENCE;
 
-        if( f > T_LAST && bot_idx < victim->pu_n_public ) {
+        if( f > T_LAST && bot_idx < victim->pu.pu_n_public ) {
           int all_stolen = 1;
           volatile Task *ep;
 
@@ -2342,14 +2342,14 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
           tp->balarm = self_idx;
 
 #if !WOOL_FIXED_STEAL
-          for( e_idx = victim->dq_bot; e_idx < bot_idx; e_idx++ ) {
+          for( e_idx = victim->pu.dq_bot; e_idx < bot_idx; e_idx++ ) {
             ep = idx_to_task_p_pu( victim, e_idx, base );
             if( ep->f > T_LAST ) {
               all_stolen = 0;
             }
           }
           if( all_stolen ) {
-            victim->dq_bot = bot_idx+1;
+            victim->pu.dq_bot = bot_idx+1;
           } else {
             PR_INC( self, CTR_steal_no_inc );
           }
@@ -2373,10 +2373,10 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
 
   if( tp != NULL ) {
 
-    // fprintf( stderr, "S %d %d %lu\n", self_idx, victim_idx, tp - victim->block_base[0] );
+    // fprintf( stderr, "S %d %d %lu\n", self_idx, victim_idx, tp - victim->pr.block_base[0] );
 
     FAST_TIME(t_pre_rs);
-    maybe_request_stealable( victim, bot_idx, victim->pu_n_public );
+    maybe_request_stealable( victim, bot_idx, victim->pu.pu_n_public );
 
     // One less old thief?
     if( is_old_thief ) {
@@ -2386,13 +2386,13 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
     FAST_TIME(t_post_rs);
     #if ( WOOL_STEAL_SET || WOOL_STEAL_DKS )
       if( flags & ST_THIEF ) {
-        self->is_thief = 0;
+        self->pu.is_thief = 0;
       }
     #endif
 
     #if WOOL_STEAL_SAMPLE
       if( flags & ST_THIEF ) {
-        self->flag = victim->flag + bot_idx + 1;
+        self->pu.flag = victim->pu.flag + bot_idx + 1;
       }
     #endif
 
@@ -2428,7 +2428,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
     time_event( self, 2 );
 
     #if WOOL_STEAL_SET || WOOL_STEAL_DKS
-      // self->is_thief = 1; // Only if we're called from look_for_work
+      // self->pu.is_thief = 1; // Only if we're called from look_for_work
     #endif
 
       // instead of locking, so that the return value is really updated
@@ -2527,13 +2527,13 @@ static inline TILE_INLINE int task_appears_stealable( Task *p )
 
 static int poll( Worker *w )
 {
-  long unsigned  bot      = w->dq_bot;
-  Task          *base     = w->pu_block_base[0];
-  int            depth    = w->flag;
+  long unsigned  bot      = w->pu.dq_bot;
+  Task          *base     = w->pu.pu_block_base[0];
+  int            depth    = w->pu.flag;
   Task          *p;
 
   #if WOOL_STEAL_SET
-    if( w->is_thief ) {
+    if( w->pu.is_thief ) {
       return -2;
     }
     #if WOOL_FAST_SAMPLING
@@ -2575,7 +2575,7 @@ void *look_for_work( void *arg )
 {
   int *subworkers = (int *) arg;
   Worker *self = _WOOL_(slow_get_self)();
-  int self_idx = self->idx;
+  int self_idx = self->pr.idx;
   int n = n_workers;
   int more;
   int attempts = 0;
@@ -2637,7 +2637,7 @@ void *look_for_work( void *arg )
   }
 
 #if !WOOL_STEAL_SAMPLE
-  self->is_thief = 1;
+  self->pu.is_thief = 1;
 #endif
 
 #endif
@@ -2772,7 +2772,7 @@ void *look_for_work( void *arg )
         since_rand = 0;
       #endif
       n_seen = n_thieves = 0;
-      self->is_thief = 1;
+      self->pu.is_thief = 1;
 #else
       next_yield = yield_interval;
       next_sleep = sleep_interval;
@@ -2811,7 +2811,7 @@ void *look_for_work( void *arg )
     #endif
 
     WOOL_WHEN_SYNC_MORE( wool_lock( &more_lock ); )
-      more = self->more_work;
+      more = self->pr.more_work;
     WOOL_WHEN_SYNC_MORE( wool_unlock( &more_lock ); )
   } while( more > 1 );
 
@@ -2838,17 +2838,17 @@ static void *do_work( void *arg )
     (*self_p)->time = gethrtime();
   #endif
 
-  wool_lock( &( (*self_p)->work_lock )  );
-  if( (*self_p)->fun == NULL && (*self_p)->more_work > 0 ) {
-    pthread_cond_wait( &( (*self_p)->work_available ), &( (*self_p)->work_lock ) );
+  wool_lock( &( (*self_p)->pu.work_lock )  );
+  if( (*self_p)->pu.fun == NULL && (*self_p)->pr.more_work > 0 ) {
+    pthread_cond_wait( &( (*self_p)->pu.work_available ), &( (*self_p)->pu.work_lock ) );
   }
 
-  while( (*self_p)->more_work > 0 ) {
-    (*self_p)->fun( (*self_p)->fun_arg );
-    (*self_p)->fun = NULL;
-    pthread_cond_wait( &( (*self_p)->work_available ), &( (*self_p)->work_lock ) );
+  while( (*self_p)->pr.more_work > 0 ) {
+    (*self_p)->pu.fun( (*self_p)->pu.fun_arg );
+    (*self_p)->pu.fun = NULL;
+    pthread_cond_wait( &( (*self_p)->pu.work_available ), &( (*self_p)->pu.work_lock ) );
   }
-  wool_unlock( &( (*self_p)->work_lock ) );
+  wool_unlock( &( (*self_p)->pu.work_lock ) );
 
   time_event( workers[self_idx], 9 );
 
@@ -3038,13 +3038,13 @@ void signal_worker_shutdown( void )
   WOOL_WHEN_SYNC_MORE( wool_lock( &more_lock ); )
   for( i = 0; i < n_workers; i++) {
     // Quit look_for_work().
-    workers[i]->more_work = 1;
+    workers[i]->pr.more_work = 1;
     // This releases work_lock, set more_work under work_lock.
-    wool_lock( &( workers[i]->work_lock ) );
-    workers[i]->more_work = 0;
-    wool_unlock( &( workers[i]->work_lock ) );
+    wool_lock( &( workers[i]->pu.work_lock ) );
+    workers[i]->pr.more_work = 0;
+    wool_unlock( &( workers[i]->pu.work_lock ) );
     //  Signal the worker to release it.
-    pthread_cond_signal( &( workers[i]->work_available) );
+    pthread_cond_signal( &( workers[i]->pu.work_available) );
   }
   WOOL_WHEN_SYNC_MORE( wool_unlock( &more_lock ); )
 }
@@ -3270,8 +3270,8 @@ void wool_fini( void )
 #if 0
   for( i = 0; i < n_workers; i++ ) {
     Worker *w = workers[i];
-    fprintf( stderr, "", w->dq_bot - w->dq_base );
-    // fprintf( stderr, "%ld\n", w->dq_bot - w->dq_base );
+    fprintf( stderr, "", w->pu.dq_bot - w->pr.dq_base );
+    // fprintf( stderr, "%ld\n", w->pu.dq_bot - w->pr.dq_base );
   }
 #endif
 
