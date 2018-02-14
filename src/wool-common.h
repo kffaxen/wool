@@ -278,7 +278,7 @@ typedef volatile unsigned long exarg_t;
   #if defined(__TILECC__)
     #define _WOOL_ordered_stores 0
   #else
-    #define _WOOL_ordered_stores 0
+    #define _WOOL_ordered_stores 1
   #endif
 #endif
 
