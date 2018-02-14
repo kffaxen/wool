@@ -90,7 +90,7 @@
 #endif
 
 #ifndef WOOL_INLINED_BOT_DEC
-  #define WOOL_INLINED_BOT_DEC 1
+  #define WOOL_INLINED_BOT_DEC (! _WOOL_ordered_stores)
 #endif
 
 #ifndef WOOL_FIXED_STEAL
@@ -278,7 +278,6 @@ typedef volatile unsigned long exarg_t;
   #if defined(__TILECC__)
     #define _WOOL_ordered_stores 0
   #else
-    // Currently, the ordered stores protocol appears not to work
     #define _WOOL_ordered_stores 0
   #endif
 #endif
