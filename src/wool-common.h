@@ -354,7 +354,7 @@ WOOL_WHEN_MSPAN( extern void __wool_set_span( hrtime_t ); )
 
 
 #if COUNT_EVENTS
-#define PR_ADD(s,i,k) ( ((s)->ctr[i])+= k )
+#define PR_ADD(s,i,k) ( ((s)->pr.ctr[i])+= k )
 #else
 #define PR_ADD(s,i,k) /* Empty */
 #endif

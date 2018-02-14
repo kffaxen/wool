@@ -372,16 +372,16 @@ static hrtime_t gethrtime()
 void time_event( Worker *w, int event )
 {
   hrtime_t now = gethrtime(),
-           prev = w->time;
+           prev = w->pr.time;
 
   switch( event ) {
 
     // Enter application code
     case 1 :
-        if(  w->clock /* level */ == 0 ) {
+        if(  w->pr.clock /* level */ == 0 ) {
           PR_ADD( w, CTR_init, now - prev );
-          w->clock = 1;
-        } else if( w->clock /* level */ == 1 ) {
+          w->pr.clock = 1;
+        } else if( w->pr.clock /* level */ == 1 ) {
           PR_ADD( w, CTR_wsteal, now - prev );
           PR_ADD( w, CTR_wstealsucc, now - prev );
         } else {
@@ -392,7 +392,7 @@ void time_event( Worker *w, int event )
 
     // Exit application code
     case 2 :
-        if( w->clock /* level */ == 1 ) {
+        if( w->pr.clock /* level */ == 1 ) {
           PR_ADD( w, CTR_wapp, now - prev );
         } else {
           PR_ADD( w, CTR_lapp, now - prev );
@@ -401,29 +401,29 @@ void time_event( Worker *w, int event )
 
     // Enter sync on stolen
     case 3 :
-        if( w->clock /* level */ == 1 ) {
+        if( w->pr.clock /* level */ == 1 ) {
           PR_ADD( w, CTR_wapp, now - prev );
         } else {
           PR_ADD( w, CTR_lapp, now - prev );
         }
-        w->clock++;
+        w->pr.clock++;
         break;
 
     // Exit sync on stolen
     case 4 :
-        if( w->clock /* level */ == 1 ) {
-          fprintf( stderr, "This should not happen, level = %d\n", w->clock );
+        if( w->pr.clock /* level */ == 1 ) {
+          fprintf( stderr, "This should not happen, level = %d\n", w->pr.clock );
         } else {
           PR_ADD( w, CTR_lsteal, now - prev );
         }
-        w->clock--;
+        w->pr.clock--;
         break;
 
     // Return from failed steal
     case 7 :
-        if( w->clock /* level */ == 0 ) {
+        if( w->pr.clock /* level */ == 0 ) {
           PR_ADD( w, CTR_init, now - prev );
-        } else if( w->clock /* level */ == 1 ) {
+        } else if( w->pr.clock /* level */ == 1 ) {
           PR_ADD( w, CTR_wsteal, now - prev );
         } else {
           PR_ADD( w, CTR_lsteal, now - prev );
@@ -432,7 +432,7 @@ void time_event( Worker *w, int event )
 
     // Signalling time
     case 8 :
-        if( w->clock /* level */ == 1 ) {
+        if( w->pr.clock /* level */ == 1 ) {
           PR_ADD( w, CTR_wsignal, now - prev );
           PR_ADD( w, CTR_wsteal, now - prev );
         } else {
@@ -443,7 +443,7 @@ void time_event( Worker *w, int event )
 
     // Done
     case 9 :
-        if( w->clock /* level */ == 0 ) {
+        if( w->pr.clock /* level */ == 0 ) {
           PR_ADD( w, CTR_init, now - prev );
         } else {
           PR_ADD( w, CTR_close, now - prev );
@@ -453,7 +453,7 @@ void time_event( Worker *w, int event )
     default: return;
   }
 
-  w->time = now;
+  w->pr.time = now;
 }
 
 #endif
@@ -511,9 +511,9 @@ static hrtime_t advance_time( Worker *self, hrtime_t delta_t )
 
     if( t >= time_field_range ) t = time_field_range-1;
 
-    self->logptr->what = 0;
-    self->logptr->time = (timefield_t) t;
-    self->logptr ++;
+    self->pr.logptr->what = 0;
+    self->pr.logptr->time = (timefield_t) t;
+    self->pr.logptr ++;
 
     delta_t -= t * MINOR_TIME;
   }
@@ -539,11 +539,11 @@ void logEvent( Worker *self, int what )
     delta_t = advance_time( self, delta_t );
   }
 
-  p = self->logptr;
+  p = self->pr.logptr;
   p->what = what;
   p->time = (timefield_t) ( delta_t / TIME_STEP );
 
-  self->logptr ++;
+  self->pr.logptr ++;
   p++;
 
   if( ((unsigned long) p) % 64 == 0 ) {
@@ -558,18 +558,18 @@ static void sync_clocks( Worker *self )
   int i,k;
 
   for( i=0; i<2; i++ ) {
-    while( self->clock != 1 ) ;
-    self->clock = 2;
+    while( self->pr.clock != 1 ) ;
+    self->pr.clock = 2;
     for( k=3; k<8; k+=2 ) {
-      while( self->clock != k ) ;
+      while( self->pr.clock != k ) ;
       if( k==5 ) slave_time = gethrtime();
-      self->clock = k+1;
+      self->pr.clock = k+1;
     }
   }
-  while( self->clock != 9 ) ;
-  self->time = slave_time;
+  while( self->pr.clock != 9 ) ;
+  self->pr.time = slave_time;
   COMPILER_FENCE;
-  self->clock = 10;
+  self->pr.clock = 10;
   for( i = self->pr.idx; i < self->pr.idx + workers_per_thread; i++ ) {
     workers[i]->now = first_time;
   }
@@ -585,18 +585,18 @@ static void master_sync(void)
   for( i=1; i<n_procs; i++ ) {
     Worker *slave = workers[i*workers_per_thread];
     for( j=0; j<2; j++ ) {
-      slave->clock = 1;
-      while( slave->clock != 2 ) ;
+      slave->pr.clock = 1;
+      while( slave->pr.clock != 2 ) ;
       master_time = gethrtime( );
       for( k=3; k<8; k+=2 ) {
-        slave->clock = k;
-        while( slave->clock != k+1 ) ;
+        slave->pr.clock = k;
+        while( slave->pr.clock != k+1 ) ;
       }
       round_trip = gethrtime() - master_time;
     }
-    slave->clock = 9;
-    while( slave->clock != 10 ) ;
-    diff[i] = master_time + round_trip/2 - slave->time;
+    slave->pr.clock = 9;
+    while( slave->pr.clock != 10 ) ;
+    diff[i] = master_time + round_trip/2 - slave->pr.time;
     trip[i] = round_trip;
   }
   diff[0] = 0;
@@ -2835,7 +2835,7 @@ static void *do_work( void *arg )
   #endif
 
   #if WOOL_PIE_TIMES
-    (*self_p)->time = gethrtime();
+    (*self_p)->pr.time = gethrtime();
   #endif
 
   wool_lock( &( (*self_p)->pu.work_lock )  );
@@ -3134,7 +3134,7 @@ void wool_fini( void )
       }
     }
     for( i = 0; i < n_workers; i++ ) {
-      unsigned long long *lctr = workers[i]->ctr;
+      unsigned long long *lctr = workers[i]->pr.ctr;
       lctr[ CTR_spawn ] = lctr[ CTR_inlined ] + lctr[ CTR_read ] + lctr[ CTR_waits ];
       fprintf( log_file, "\nSTAT %3d ", i );
       for( j = 0; j < CTR_MAX; j++ ) {
@@ -3159,7 +3159,7 @@ void wool_fini( void )
     fprintf( log_file, "\nMeasurement clock (tick) frequency:  %.2f GHz\n\n", ticks_per_ms / 1000000.0 );
     for( i = 0; i < n_workers; i++ ) {
       int j;
-      unsigned long long *lctr = workers[i]->ctr;
+      unsigned long long *lctr = workers[i]->pr.ctr;
       lctr[ CTR_spawn ] = lctr[ CTR_inlined ] + lctr[ CTR_read ] + lctr[ CTR_waits ];
       for( j = 0; j < CTR_MAX; j++ ) {
         ctr_all[j] += lctr[j];
@@ -3254,7 +3254,7 @@ void wool_fini( void )
     hrtime_t curr_time = diff[i];
 
     fprintf( log_file, "\n" );
-    for( p = logbuff[i]; p < workers[i]->logptr; p++ ) {
+    for( p = logbuff[i]; p < workers[i]->pr.logptr; p++ ) {
       if( p->what == 0 ) {
         curr_time += p->time * MINOR_TIME;
         fprintf( log_file, "ADVANCE %d %d\n", i, p->time );
