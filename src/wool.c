@@ -269,7 +269,7 @@ static pthread_t *ts = NULL;
 
 #define MAX_THREADS 1024
 
-int affinity_table[MAX_THREADS];
+static int affinity_table[MAX_THREADS];
 
 #if SYNC_MORE
 static wool_lock_t more_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -285,7 +285,7 @@ static pthread_attr_t worker_attr;
 static int event_mask = -1;
 #endif
 
-int    workers_per_thread = 0;
+static int workers_per_thread = 0;
 
 static long long unsigned us_elapsed(void)
 {
@@ -636,7 +636,7 @@ static int switch_interval = 10000
            ;
 #if THREAD_GARAGE
 
-struct _Garage {
+static struct _Garage {
   pthread_mutex_t lck;
   pthread_cond_t cnd;
 } *garage = NULL;
@@ -850,8 +850,8 @@ void wait_for_init_done(int p_idx)
 #endif
 }
 
-int yield_interval = 10000; // Also set from command line
-int sleep_interval = 100000; // Wait after so many attempts, also set by '-i'
+static int yield_interval = 10000; // Also set from command line
+static int sleep_interval = 100000; // Wait after so many attempts, also set by '-i'
 
 // Decrement old thieves when an old thief successfully
 // steals but before the call. Since old_thieves is always <= max_old_thieves,
@@ -1969,7 +1969,7 @@ static void init_worker( int w_idx )
 #define set_worker_affinity(x) /* Nothing */
 #else
 
-int affinity_mode = 0;
+static int affinity_mode = 0;
 
 static int chip_major[] = {0, 2, 4, 6, 1, 3, 5, 7};
 static int chip_minor[] = {0, 1, 2, 3, 4, 5, 6, 7};
@@ -2470,7 +2470,7 @@ static int myrand( unsigned int *seedp, int max )
   return rand_r( seedp ) % max;
 }
 
-int rand_interval = 40; // By default, scan sequentially for 0..39 attempts
+static int rand_interval = 40; // By default, scan sequentially for 0..39 attempts
 
 #define to_widx(n,i) ( (n)>(i) ? (i) : (n) > (i)-(n) ? (i)-(n) : (i)%(n) )
 // #define to_widx(n,i) ( (i)%(n) )
@@ -3032,7 +3032,7 @@ unsigned long long ctr_all[ CTR_MAX ];
 
 #endif
 
-void signal_worker_shutdown( void )
+static void signal_worker_shutdown( void )
 {
   int i;
   WOOL_WHEN_SYNC_MORE( wool_lock( &more_lock ); )
