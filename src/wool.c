@@ -2603,7 +2603,7 @@ static void *look_for_work( void *arg )
   int  next_yield = yield_interval, next_sleep = local_sleep_interval;
   int victim_idx = WOOL_STEAL_NEW_SET ? self_idx : 0;
   int next_spin = n-1;
-  volatile int v;
+  volatile int v = 0; // To ensure that a delay loop is executed
 #if WOOL_STEAL_NEW_SET
   int since_rand = 0;
   const int max_rand_interval = 1000;
@@ -2717,7 +2717,7 @@ static void *look_for_work( void *arg )
         }
         next_yield += yield_interval;
       } else {
-        v = spin( self, backoff_mode );
+        v |= spin( self, backoff_mode ); // Delay and 'or' into volatile variable
         next_spin += n-1;
       }
     }
