@@ -1231,7 +1231,7 @@ maybe_request_stealable( Worker *victim, unsigned long b_idx, unsigned long pub 
     #endif
 }
 
-static void init_block( Task *base, unsigned long size, long public_tasks )
+static void init_block( Task *base, unsigned long size, unsigned long public_tasks )
 {
   unsigned long i;
 
@@ -1908,7 +1908,8 @@ static void init_worker( int w_idx )
   w->pu.is_running = THREAD_GARAGE ? 1 : 0;
   w->pr.thread_leader = -1;
   w->pr.more_work = 2;
-  init_block( w->pr.dq_base, first_block_size, (long) n_stealable );
+  assert( n_stealable >= 0 );
+  init_block( w->pr.dq_base, first_block_size, (unsigned long) n_stealable );
   w->pr.block_base[0] = w->pr.dq_base;
   w->pu.pu_block_base[0] = w->pr.dq_base;
   for( i = 1; i < _WOOL_pool_blocks; i++ ) {
