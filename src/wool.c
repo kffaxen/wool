@@ -2582,7 +2582,6 @@ static int global_max_fail_while_searching =
 // if the argument is NULL.
 static void *look_for_work( void *arg )
 {
-  int *subworkers = (int *) arg;
   Worker *self = _WOOL_(slow_get_self)();
   int self_idx = self->pr.idx;
   int n = n_workers;
