@@ -2063,6 +2063,9 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
 {
   volatile Task   *tp;
   wrapper_t        f = T_BUSY;
+#if TWO_FIELD_SYNC
+  balarm_t         alarm;
+#endif
   Worker          *victim;
   int              is_old_thief = flags & ST_OLD;
   long unsigned    bot_idx;
@@ -2290,15 +2293,19 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
       }
 #elif TWO_FIELD_SYNC
       FAST_TIME(t_pre_x);
-      f = _WOOL_(exch_busy_balarm)( &(tp->balarm) );
-      if( __builtin_expect( f != TF_OCC, 1 ) ) {
+      alarm = _WOOL_(exch_busy_balarm)( &(tp->balarm) );
+      if( __builtin_expect( alarm != TF_OCC, 1 ) ) {
         FAST_TIME(t_post_x);
-        if( !WOOL_BALARM_CACHING || __builtin_expect( f == TF_FREE, 0 ) ) {
-          #if WOOL_BALARM_CACHING
+        #if WOOL_BALARM_CACHING
+          if( __builtin_expect( alarm == TF_FREE, 0 ) ) {
             PR_INC( self, CTR_wrapper_reread );
-          #endif
+            f = tp->f;
+          } else {
+            f = alarm;
+          }
+        #else
           f = tp->f;
-        }
+        #endif
         #if WOOL_STEAL_REPF
           __builtin_prefetch( tp );
         #endif
@@ -2316,13 +2323,14 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
           #endif
           FAST_TIME(t_post_c);
         } else {
-          tp->balarm = WOOL_BALARM_CACHING ? f : TF_FREE;
+          tp->balarm = WOOL_BALARM_CACHING ? alarm : TF_FREE;
           tp = NULL;
           PR_INC( self, CTR_steal_no_inc ); // does the job of counting back outs
         }
       } else {
         // This also covers the case where *tp is no longer public
         tp = NULL;
+        f = NULL;
       }
 #else
       // Exchange version, can result in out of order steals
