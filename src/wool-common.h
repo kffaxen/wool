@@ -1045,6 +1045,13 @@ Worker* _WOOL_(get_self)( Worker* self, int in_task )
   return in_task ? self : _WOOL_(slow_get_self)();
 }
 
+static inline __attribute__((always_inline))
+char* _WOOL_(arg_ptr)( Task* t, size_t alignment )
+{
+  const size_t sizeplusalign = sizeof( __wool_task_common ) + alignment - 1;
+  return ((char *) t) + sizeplusalign - sizeplusalign % alignment;
+}
+
 #define WOOL_CONTEXT_CACHE  Worker *const _WOOL_(tmp_self) = __self; Worker* __self = _WOOL_(get_self)( _WOOL_(tmp_self), _WOOL_(in_task) ); const int _WOOL_(in_task) = 1;
 
 

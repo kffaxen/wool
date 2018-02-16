@@ -142,9 +142,7 @@ typedef struct _##NAME##_TD {
 static inline __attribute__((__always_inline__))
 char* NAME##_FREE_SPACE(Task* cached_top)
 {
-  const size_t _WOOL_max_align = $ARGS_MAX_ALIGN;
-  const size_t _WOOL_(sss) = sizeof( __wool_task_common ) + _WOOL_max_align - 1;
-  char *_WOOL_(p) = ((char *) cached_top) + _WOOL_(sss) - _WOOL_(sss) % _WOOL_max_align;
+  char *_WOOL_(p) = _WOOL_(arg_ptr)( cached_top, $ARGS_MAX_ALIGN );
 
   return _WOOL_(p) + _WOOL_ALIGNTO( $OFFSET_EXP, double );
 }
@@ -157,9 +155,7 @@ static inline __attribute__((__always_inline__))
 void NAME##_SPAWN(Worker *__self $FUN_a_FORMALS)
 {
   Task* cached_top = __self->pr.pr_top;
-  const unsigned long _WOOL_max_align = $ARGS_MAX_ALIGN;
-  const unsigned long _WOOL_(sss) = sizeof( __wool_task_common ) + _WOOL_max_align - 1;
-  char *_WOOL_(p) = ((char *) cached_top) + _WOOL_(sss) - _WOOL_(sss) % _WOOL_max_align;
+  char *_WOOL_(p) = _WOOL_(arg_ptr)( cached_top, $ARGS_MAX_ALIGN );
 
 $TASK_a_INIT_p
 
@@ -218,9 +214,7 @@ $RTYPE NAME##_SYNC(Worker *__self)
 
   if( __builtin_expect( jfp < cached_top, 1 ) ) {
     Task *t = --cached_top;
-    const unsigned long _WOOL_max_align = $ARGS_MAX_ALIGN;
-    const unsigned long _WOOL_(sss) = sizeof( __wool_task_common ) + _WOOL_max_align - 1;
-    char *_WOOL_(p) = ((char *) t) + _WOOL_(sss) - _WOOL_(sss) % _WOOL_max_align;
+    char *_WOOL_(p) = _WOOL_(arg_ptr)( t, $ARGS_MAX_ALIGN );
     $RES_FIELD
 
     __self->pr.pr_top = cached_top;
@@ -264,9 +258,7 @@ $RTYPE NAME##_CALL(Worker *_WOOL_(self) $FUN_a_FORMALS);
 
 void NAME##_WRAP(Worker *__self, NAME##_TD *t)
 {
-  const unsigned long _WOOL_max_align = $ARGS_MAX_ALIGN;
-  const unsigned long _WOOL_(sss) = sizeof( __wool_task_common ) + _WOOL_max_align - 1;
-  char *_WOOL_(p) = ((char *) t) + _WOOL_(sss) - _WOOL_(sss) % _WOOL_max_align;
+  char *_WOOL_(p) = _WOOL_(arg_ptr)( (Task *) t, $ARGS_MAX_ALIGN );
 
   $SAVE_RVAL NAME##_CALL( __self $TASK_GET_FROM_p );
 }
@@ -292,9 +284,7 @@ Task *NAME##_PUB(Worker *self, Task *top, Task *jfp )
    ) {
     /* Semi fast case */
     NAME##_TD *t = (NAME##_TD *) --top;
-    const unsigned long _WOOL_max_align = $ARGS_MAX_ALIGN;
-    const unsigned long _WOOL_(sss) = sizeof( __wool_task_common ) + _WOOL_max_align - 1;
-    char *_WOOL_(p) = ((char *) t) + _WOOL_(sss) - _WOOL_(sss) % _WOOL_max_align;
+    char *_WOOL_(p) = _WOOL_(arg_ptr)( (Task *) t, $ARGS_MAX_ALIGN );
 
     self->pr.pr_top = top;
     PR_INC( self, CTR_inlined );
