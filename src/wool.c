@@ -1309,7 +1309,6 @@ static void reset_all_derived( Worker *w, int maybe_skip )
   } else if( w->pr.decrement_deferred ) {
     throw_spawn_exception( w );
   }
-  w->pr.privatizing_bound = base + ( pub / sizeof(Task) ) - steal_margin;
 }
 
 Task *_WOOL_(slow_spawn)( Worker *self, Task *p, wrapper_t f )
@@ -1925,7 +1924,6 @@ static void init_worker( int w_idx )
   w->pr.n_public = n_stealable;
   w->pu.pu_n_public = n_stealable;
   w->pr.storage = NULL;
-  w->pr.privatizing_bound = LARGE_POINTER;
   w->pr.highest_bot = 0;
   w->pu.dq_lock = &( w->pu.the_lock );
   pthread_mutex_init( w->pu.dq_lock, NULL );

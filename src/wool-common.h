@@ -585,8 +585,6 @@ struct _Worker_private {
   // Externally managed storage area for "Wool-plugins". Initialized to
   // NULL by init_worker().
   void             *storage;
-  Task             *privatizing_bound; // Only below this point is it sensible to call
-                                       // less_stealable()
 #if LOG_EVENTS
   LogEntry         *logptr;
 #else
@@ -992,7 +990,6 @@ void _wool_when_sync_on_public( Worker *self )
 }
 
 #if WOOL_ADD_STEALABLE
-// #define WOOL_LS_TEST(w,top) ( w->unstolen_stealable > 0 /* || w->privatizing_bound <= top */ )
 #define WOOL_LS_TEST(us) ( us > 0 )
 #define WOOL_WHEN_AS( x ) x
 #define WOOL_WHEN_AS_C( x ) x,
