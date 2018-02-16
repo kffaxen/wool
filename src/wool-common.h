@@ -763,7 +763,7 @@ extern Worker **workers;
 
 // int main_CALL( Worker *, Task *, int, char ** );
 Task *_WOOL_(slow_spawn)( Worker *, Task *, wrapper_t );
-Task *_WOOL_(new_slow_sync)( Worker *, Task *, grab_res_t );
+Task *_WOOL_(slow_sync)( Worker *, Task *, grab_res_t );
 Worker *_WOOL_(slow_get_self)( void );
 
 int  wool_init( int, char ** );

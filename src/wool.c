@@ -1817,7 +1817,7 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
 
 }
 
-Task *_WOOL_(new_slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
+Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
 {
   // We get here for any of these reasons
   // - We're popping out of our current block

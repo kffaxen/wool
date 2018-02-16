@@ -292,7 +292,7 @@ Task *NAME##_PUB(Worker *self, Task *top, Task *jfp )
     return top;
   } else {
       /* An exceptional case */
-      top = _WOOL_(new_slow_sync)( self, top, res );
+      top = _WOOL_(slow_sync)( self, top, res );
       return top;
   }
 
