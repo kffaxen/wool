@@ -168,9 +168,11 @@
 
 #define SO_CL    10 // A classical leap as outcome of transitive leap frogging
 
+static void *look_for_work( void *arg );
+
 WOOL_WHEN_MSPAN( hrtime_t __wool_sc = 1000; )
 
-Worker **workers;
+static Worker **workers;
 static Task   **bases;
 static int n_workers = 0, n_procs = 0, n_threads = 0;
 static int backoff_mode = 960; __attribute__((unused)) // No of iterations of waiting after
@@ -828,7 +830,7 @@ static wool_cond_t init_cond = PTHREAD_COND_INITIALIZER;
 static int n_initialized = 0;
 #endif
 
-void wait_for_init_done(int p_idx)
+static void wait_for_init_done(int p_idx)
 {
 #if WOOL_INIT_SPIN
   if( p_idx + 1 < n_procs ) {
@@ -2006,7 +2008,7 @@ static void set_worker_affinity( int w_idx )
 }
 #endif
 
-void init_workers( int w_idx, int n )
+static void init_workers( int w_idx, int n )
 {
   int i;
 
@@ -2571,7 +2573,7 @@ static int global_max_fail_while_searching =
 
 // Takes an optional int * of workers to steal from. Steals from everywhere
 // if the argument is NULL.
-void *look_for_work( void *arg )
+static void *look_for_work( void *arg )
 {
   int *subworkers = (int *) arg;
   Worker *self = _WOOL_(slow_get_self)();
@@ -3282,7 +3284,7 @@ void wool_fini( void )
 }
 
 // Starts the runtime system with workstealing if start_ws is true.
-void rts_init_start( int start_ws )
+static void rts_init_start( int start_ws )
 {
   int i;
 

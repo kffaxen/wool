@@ -759,8 +759,6 @@ static inline Worker *_WOOL_(slow_get_self)( void )
   return (Worker *) _WOOL_(getspecific)( tls_self );
 }
 
-extern Worker **workers;
-
 // int main_CALL( Worker *, Task *, int, char ** );
 Task *_WOOL_(slow_spawn)( Worker *, Task *, wrapper_t );
 Task *_WOOL_(slow_sync)( Worker *, Task *, grab_res_t );
@@ -768,14 +766,10 @@ Worker *_WOOL_(slow_get_self)( void );
 
 int  wool_init( int, char ** );
 int  wool_init_options( int, char ** );
-void rts_init_start( int );
 void wool_init_start( void );
-void init_workers( int, int );
-void wait_for_init_done( int );
 void wool_fini( void );
 int  wool_get_nworkers( void );
 int  wool_get_worker_id( void );
-void *look_for_work( void * );
 void work_for( workfun_t, void * );
 
 #if WOOL_PIE_TIMES
