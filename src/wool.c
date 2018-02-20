@@ -1421,6 +1421,10 @@ static Task *push_task( Worker *self, Task *p )
 {
   int idx = self->pr.t_idx;
 
+  if( p != self->pr.pr_top ) {
+    return self->pr.pr_top;
+  }
+
   if( p < self->pr.block_base[idx]+block_size(idx)-1 ) {
     self->pr.pr_top = p+1;
     return p+1;
@@ -1442,6 +1446,8 @@ static Task *push_task( Worker *self, Task *p )
 static void pop_task( Worker *self, Task *p )
 {
   Task *base = self->pr.curr_block_base;
+
+  if( p != self->pr.pr_top ) return;
 
   if( p > base ) {
      p--;
