@@ -1787,7 +1787,7 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
         record_leap_fails( self, nfail );
       #endif
 
-      pop_task( self, (Task *) tp1 );
+      pop_task( self, tp1 );
 
       time_event( self, 4 );
       logEvent( self, 4 );
