@@ -189,6 +189,10 @@
   #define WOOL_WHEN_SYNC_MORE( x )
 #endif
 
+#ifndef WOOL_JOIN_STACK
+  #define WOOL_JOIN_STACK TWO_FIELD_SYNC
+#endif
+
 // For code that we know are effectively dead branches unless
 // WOOL_STEAL_SAMPLE and WOOL_STEAL_NEW_SET are both enabled.
 //
