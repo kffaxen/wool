@@ -1008,7 +1008,7 @@ static Task *idx2ptr_curr( Worker *w, unsigned long t )
 static unsigned long new_local_public_size( int t_idx, unsigned long n_public )
 {
   unsigned long this_base_idx = start_idx_of_block( t_idx ),
-                next_base_idx = start_idx_of_block( t_idx+1 );
+                next_base_idx = start_idx_of_block( (t_idx+1) % _WOOL_pool_blocks );
 
   if( n_public < this_base_idx ) {
     return 0;
@@ -1388,27 +1388,28 @@ Task *_WOOL_(slow_spawn)( Worker *self, Task *p, _wool_task_header_t f )
 
   if( next_free >= self->pr.block_base[idx] + block_size(idx) ) {
     // Make a new block
-    unsigned long n_tasks = block_size(++idx);
-    unsigned long s_idx = start_idx_of_block( idx );
+    int new_idx = (idx+1) % _WOOL_pool_blocks;
+    unsigned long n_tasks = block_size(new_idx);
+    unsigned long s_idx = start_idx_of_block( new_idx );
     unsigned long n_public = self->pr.n_public;
 
-    if( idx == _WOOL_pool_blocks ) {
+    if( new_idx == 0 ) {
       fprintf( stderr, "Out of space for task stack\n" );
       exit(1);
     }
-    self->pr.t_idx = idx;
-    if( self->pr.block_base[idx] == NULL ) {
-      // fprintf( stderr, "%d %d\n", self->pr.idx, idx );
-      self->pr.block_base[idx] = (Task *) alloc_aligned( n_tasks * sizeof(Task), AA_HERE );
-      init_block( self->pr.block_base[idx], n_tasks,
+    self->pr.t_idx = new_idx;
+    if( self->pr.block_base[new_idx] == NULL ) {
+      // fprintf( stderr, "%d %d\n", self->pr.idx, new_idx );
+      self->pr.block_base[new_idx] = (Task *) alloc_aligned( n_tasks * sizeof(Task), AA_HERE );
+      init_block( self->pr.block_base[new_idx], n_tasks,
                   s_idx < n_public ? n_public - s_idx : 0 );
       SFENCE;
-      self->pu.pu_block_base[idx] = self->pr.block_base[idx];
+      self->pu.pu_block_base[new_idx] = self->pr.block_base[new_idx];
     }
-    next_free = self->pr.block_base[idx];
+    next_free = self->pr.block_base[new_idx];
     // Support fast conversion of pointer to index
-    self->pr.curr_block_fidx = start_idx_of_block( idx );
-    self->pr.curr_block_base = self->pr.block_base[idx];
+    self->pr.curr_block_fidx = start_idx_of_block( new_idx );
+    self->pr.curr_block_base = self->pr.block_base[new_idx];
   }
   reset_all_derived( self, 1 );
 
@@ -1425,13 +1426,14 @@ static Task *push_task( Worker *self, Task *p )
     return p+1;
   } else {
     Task *tmp;
-    assert( self->pr.block_base[idx+1] != NULL );
+    int new_idx = (idx+1) % _WOOL_pool_blocks;
+    assert( self->pr.block_base[new_idx] != NULL );
 
-    self->pr.t_idx = idx+1;
-    tmp = self->pr.block_base[idx+1];
+    self->pr.t_idx = new_idx;
+    tmp = self->pr.block_base[new_idx];
     self->pr.pr_top = tmp;
     self->pr.curr_block_base = tmp;
-    self->pr.curr_block_fidx = start_idx_of_block( idx+1 );
+    self->pr.curr_block_fidx = start_idx_of_block( new_idx );
     reset_all_derived( self, 1 );
     return self->pr.pr_top;
   }
@@ -1444,7 +1446,7 @@ static void pop_task( Worker *self, Task *p )
   if( p > base ) {
      p--;
   } else {
-    int idx = self->pr.t_idx - 1;  // Index of the *new* block we're poping into
+    int idx = (self->pr.t_idx - 1) & (_WOOL_pool_blocks-1);  // Index of the *new* block we're poping into
 
     assert( idx >= 0 );
 
@@ -1871,7 +1873,7 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
     p--;
   } else {
     // Now we pop back into a lower block
-    self->pr.t_idx --;
+    self->pr.t_idx = (self->pr.t_idx-1) & (_WOOL_pool_blocks-1);
     // Support fast conversion of pointer to index
     self->pr.curr_block_fidx = start_idx_of_block( self->pr.t_idx );
     self->pr.curr_block_base = self->pr.block_base[self->pr.t_idx];
