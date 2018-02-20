@@ -897,6 +897,29 @@ static void decrement_old_thieves(void)
 }
 
 #define LARGE_POINTER    ((Task *) -1024L)
+
+#if WOOL_JOIN_STACK
+
+#define log_first_block_size 9
+#define     first_block_size (1 << log_first_block_size)
+
+/* static */ unsigned block_size( int i )
+{
+  return first_block_size;
+}
+
+static unsigned long start_idx_of_block( int i )
+{
+  return i * first_block_size;
+}
+
+static inline int block_of_idx( unsigned long t )
+{
+  return (t / first_block_size) % _WOOL_pool_blocks;
+}
+
+#else
+
 #define log_first_block_size 8
 #define     first_block_size (1 << log_first_block_size)
 
@@ -939,6 +962,8 @@ static int block_of_idx( unsigned long t )
     return lo;
   }
 }
+
+#endif
 
 #endif
 
