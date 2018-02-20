@@ -1421,26 +1421,23 @@ static Task *push_task( Worker *self, Task *p )
 {
   int idx = self->pr.t_idx;
 
-  if( p != self->pr.pr_top ) {
-    return self->pr.pr_top;
-  }
+  if( p == self->pr.pr_top ) {
+    if( p < self->pr.block_base[idx]+block_size(idx)-1 ) {
+      self->pr.pr_top = p+1;
+    } else {
+      Task *tmp;
+      int new_idx = (idx+1) % _WOOL_pool_blocks;
+      assert( self->pr.block_base[new_idx] != NULL );
 
-  if( p < self->pr.block_base[idx]+block_size(idx)-1 ) {
-    self->pr.pr_top = p+1;
-    return p+1;
-  } else {
-    Task *tmp;
-    int new_idx = (idx+1) % _WOOL_pool_blocks;
-    assert( self->pr.block_base[new_idx] != NULL );
-
-    self->pr.t_idx = new_idx;
-    tmp = self->pr.block_base[new_idx];
-    self->pr.pr_top = tmp;
-    self->pr.curr_block_base = tmp;
-    self->pr.curr_block_fidx = start_idx_of_block( new_idx );
-    reset_all_derived( self, 1 );
-    return self->pr.pr_top;
+      self->pr.t_idx = new_idx;
+      tmp = self->pr.block_base[new_idx];
+      self->pr.pr_top = tmp;
+      self->pr.curr_block_base = tmp;
+      self->pr.curr_block_fidx = start_idx_of_block( new_idx );
+      reset_all_derived( self, 1 );
+    }
   }
+  return self->pr.pr_top;
 }
 
 static void pop_task( Worker *self, Task *p )
