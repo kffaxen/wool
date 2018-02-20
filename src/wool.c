@@ -211,7 +211,7 @@ void work_for( workfun_t fun, void *arg )
 _wool_thread_local _WOOL_(key_t) tls_self;
 
 #define THIEF_IDX_BITS       12
-#define MAKE_THIEF_INFO(t,o) ( (wrapper_t) ( ((o) << THIEF_IDX_BITS) + (t) ) )
+#define MAKE_THIEF_INFO(t,o) ( (_wool_task_header_t) ( ((o) << THIEF_IDX_BITS) + (t) ) )
 #define INFO_GET_THIEF(to)   ( ((unsigned long) (to)) & ((1 << THIEF_IDX_BITS) - 1) )
 #define INFO_GET_BASE(to)     ( ((unsigned long) (to)) >> THIEF_IDX_BITS )
 
@@ -265,7 +265,7 @@ static int global_n_blocks = 3;
 
 static char *log_file_name = NULL;
 
-static int steal_one( Worker *, Worker *, wrapper_t, int, volatile Task *, unsigned long );
+static int steal_one( Worker *, Worker *, _wool_task_header_t, int, volatile Task *, unsigned long );
 
 static pthread_t *ts = NULL;
 
@@ -743,7 +743,7 @@ static int look_for_worker_to_resume( Worker *self, Task *t, int from, int to )
   for( i = from; i < to; i++ ) {
     if( i != self_idx && workers[i]->pr.wait_for != NULL ) {
      #if TWO_FIELD_SYNC
-      int is_done = workers[i]->pr.wait_for->f == SFS_DONE; // No longer blocked in join
+      int is_done = workers[i]->pr.wait_for->hdr == SFS_DONE; // No longer blocked in join
      #else
       int is_done = workers[i]->pr.wait_for->balarm == STOLEN_DONE; // No longer blocked in join
      #endif
@@ -1127,7 +1127,7 @@ static void more_stealable( Worker *w, unsigned long p_idx )
     // Under TSO, an invalid public task will have balarm==TF_FREE, so it must
     // have its f field cleared in order not to be stolen again
     if( _WOOL_ordered_stores && i > p_idx ) {
-      t->f = SFS_EMPTY;
+      t->hdr = SFS_EMPTY;
       SFENCE;
     }
     // When stores are not ordered, invalid public tasks have balarm==TF_OCC,
@@ -1239,7 +1239,7 @@ static void init_block( Task *base, unsigned long size, unsigned long public_tas
 
   for( i=0; i < size; i++ ) {
     #if TWO_FIELD_SYNC
-      base[i].f = SFS_EMPTY;
+      base[i].hdr = SFS_EMPTY;
       base[i].balarm = _WOOL_ordered_stores && i < public_tasks ? TF_FREE : TF_OCC;
       base[i].ssn = 0;
     #else
@@ -1311,7 +1311,7 @@ static void reset_all_derived( Worker *w, int maybe_skip )
   }
 }
 
-Task *_WOOL_(slow_spawn)( Worker *self, Task *p, wrapper_t f )
+Task *_WOOL_(slow_spawn)( Worker *self, Task *p, _wool_task_header_t f )
 {
   /* This function is called for a spawn in either or both of the following cases
      - a signal has been delivered, either by another worker (eg more public)
@@ -1341,9 +1341,9 @@ Task *_WOOL_(slow_spawn)( Worker *self, Task *p, wrapper_t f )
 
   #if TWO_FIELD_SYNC
     if( _WOOL_ordered_stores ) {
-      STORE_WRAPPER_REL(p->f, f);
+      STORE_WRAPPER_REL(p->hdr, f);
     } else {
-      p->f = f;
+      p->hdr = f;
       if( p_idx < self->pr.n_public ) {
         #if WOOL_BALARM_CACHING
           STORE_BALARM_T_REL(p->balarm, f);
@@ -1353,7 +1353,7 @@ Task *_WOOL_(slow_spawn)( Worker *self, Task *p, wrapper_t f )
       }
     }
   #else
-    STORE_WRAPPER_REL(p->f, f);
+    STORE_WRAPPER_REL(p->hdr, f);
   #endif
 
   // The new task is allocated and ready to steal. Meanwhile, we might need to make additional
@@ -1467,7 +1467,7 @@ static int spin( Worker *self, int n )
   return s&1;
 }
 
-static int trans_leap( Worker *self, wrapper_t card, volatile Task *orig, unsigned tb )
+static int trans_leap( Worker *self, _wool_task_header_t card, volatile Task *orig, unsigned tb )
 {
 
   volatile Task *prev = orig;
@@ -1476,7 +1476,7 @@ static int trans_leap( Worker *self, wrapper_t card, volatile Task *orig, unsign
   Worker *thief = workers[thief_idx];
   int sp = 0, i, n = n_workers;
   struct {
-    wrapper_t       tb;
+    _wool_task_header_t       tb;
     unsigned long   ssn;
     volatile Task  *prev;
   } stack[n];
@@ -1507,16 +1507,16 @@ static int trans_leap( Worker *self, wrapper_t card, volatile Task *orig, unsign
       // We're going to look at a task in the pool of the current thief
 
       volatile Task      *t = idx_to_task_p_pu( thief, thief_base, thief->pu.pu_block_base[0] );
-      wrapper_t           r = t->f;
+      _wool_task_header_t           r = t->hdr;
       unsigned long new_ssn = t->ssn;
 
       // The following is subtle and relies on the reads of 'new_ssn' and 'r' to
-      // create control dependences between the loads of 't->f' and 't->ssn'
+      // create control dependences between the loads of 't->hdr' and 't->ssn'
       // and the subsequent load of 'prev->ssn'
       // which guarantees that the current thief is still eligible, at least
       // for some machines; see the JSR-133 Cookbook
 
-      // The 'prev->ssn' read below must occur after the 't->f' and 't->ssn' reads above
+      // The 'prev->ssn' read below must occur after the 't->hdr' and 't->ssn' reads above
 
       if( SFS_IS_STOLEN( r ) && new_ssn != 0 && prev->ssn == ssn ) {
         // We've found a candidate for transitive leap frogging
@@ -1562,7 +1562,7 @@ static int trans_leap( Worker *self, wrapper_t card, volatile Task *orig, unsign
 
           }
         }
-      } else if( orig->f == SFS_DONE ) {
+      } else if( orig->hdr == SFS_DONE ) {
         return SO_NO_WORK;
       } else {
         // This task no longer contains an eligible thief, either because it
@@ -1625,7 +1625,7 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
 {
   int a;
 #if TWO_FIELD_SYNC
-  wrapper_t f;
+  _wool_task_header_t f;
   balarm_t b;
 #endif
   long unsigned t_idx;
@@ -1636,10 +1636,10 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
 
     #if TWO_FIELD_SYNC
       b = r;
-      f = t->f;
+      f = t->hdr;
       while( SFS_IS_TASK( f ) && b == TF_OCC ) {
         do {
-          f = t->f;
+          f = t->hdr;
           b = t->balarm;
         } while( SFS_IS_TASK( f ) && b == TF_OCC );
         if( b != TF_OCC ) {
@@ -1648,13 +1648,13 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
       }
       if( _WOOL_ordered_stores ) {
         if( SFS_IS_TASK( f ) ) {
-          t->f = SFS_EMPTY;
+          t->hdr = SFS_EMPTY;
         }
         STORE_BALARM_T_REL( t->balarm, TF_FREE );
       }
       if( SFS_IS_TASK( f ) ) {
         // It was never stolen or thief backed out
-        f( self, (Task *) t );
+        f->f( self, (Task *) t );
         a = INLINED;
       } else if( f == SFS_DONE ) {
         a = STOLEN_DONE;
@@ -1693,7 +1693,7 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
       int trlf_threshold = self->pr.trlf_threshold;
       int trlf_timer = trlf_threshold;
       int self_idx = self->pr.idx;
-      wrapper_t card = SFS_STOLEN( MAKE_THIEF_INFO( self_idx, ptr2idx_curr( self, tp1 ) ) );
+      _wool_task_header_t card = SFS_STOLEN( MAKE_THIEF_INFO( self_idx, ptr2idx_curr( self, tp1 ) ) );
 
       assert( thief_idx <= n_workers );
 
@@ -1743,7 +1743,7 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
           nfail++;
         }
 #if SINGLE_FIELD_SYNC || TWO_FIELD_SYNC
-        if( READ_WRAPPER_ACQ( t->f ) == SFS_DONE ) {
+        if( READ_WRAPPER_ACQ( t->hdr ) == SFS_DONE ) {
           done = 1;
         }
 #else
@@ -1869,13 +1869,13 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
   if( p_idx-1 < self->pr.n_public ) {
     _WOOL_(rts_sync)( self, p, grab_res );
   } else {
-    wrapper_t f = p->f;
+    _wool_task_header_t f = p->hdr;
     assert( !GRAB_RES_IS_TASK( grab_res ) );
     assert( SFS_IS_TASK( f ) );
     assert( p->balarm == TF_OCC );
     PR_INC( self, CTR_inlined );
-    // p->f = SFS_EMPTY; /* Temporary */
-    GET_TASK(f)( self, p );
+    // p->hdr = SFS_EMPTY; /* Temporary */
+    GET_TASK(f->f)( self, p );
   }
   assert( self->pr.pr_top == p );
 
@@ -2059,10 +2059,10 @@ static const int parsamp_size = WOOL_STEAL_PARSAMP ? 1 : 0;
 #endif
 
 static int
-steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task *jt, unsigned long ssn )
+steal( Worker *self, Worker **victim_p, _wool_task_header_t card, int flags, volatile Task *jt, unsigned long ssn )
 {
   volatile Task   *tp;
-  wrapper_t        f = T_BUSY;
+  _wool_task_header_t        f = T_BUSY;
 #if TWO_FIELD_SYNC
   balarm_t         alarm;
 #endif
@@ -2220,14 +2220,14 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
   #if WOOL_TRLF
     booty_ssn = tp->ssn;
   #endif
-  if( tp->balarm == TF_OCC || ( _WOOL_ordered_stores && ! SFS_IS_TASK(tp->f) ) ) {
+  if( tp->balarm == TF_OCC || ( _WOOL_ordered_stores && ! SFS_IS_TASK(tp->hdr) ) ) {
     time_event( self, 7 );
     return SO_NO_WORK;
   }
   FAST_TIME(t_peek);
 #else
   // This version assumes that we use locks
-  if( tp->balarm != NOT_STOLEN || tp->f <= T_LAST || !( bot_idx < victim->pu.pu_n_public ) ) {
+  if( tp->balarm != NOT_STOLEN || tp->hdr <= T_LAST || !( bot_idx < victim->pu.pu_n_public ) ) {
     time_event( self, 7 );
     return SO_NO_WORK;
   }
@@ -2244,7 +2244,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
 
 
 #if !WOOL_STEAL_NOLOCK
-  PREFETCH( tp->f ); // Start getting exclusive access
+  PREFETCH( tp->hdr ); // Start getting exclusive access
 
 #if STEAL_TRYLOCK
   if( wool_trylock( victim->dq_lock ) != 0 ) {
@@ -2278,12 +2278,12 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
     // no point in getting exclusive access in that case.
     if( WOOL_STEAL_NOLOCK ||
         ( bot_idx < victim->pu.pu_n_public && tp->balarm == (balarm_t) NOT_STOLEN
-                        && tp->f > (wrapper_t) T_LAST  ) ) {
+                        && tp->hdr > (_wool_task_header_t) T_LAST  ) ) {
 #if THE_SYNC
       // THE version, uses locks between thieves (ie !WOOL_STEAL_NOLOCK)
       tp->balarm = self_idx;
       MFENCE;
-      f = tp->f;
+      f = tp->hdr;
 
       if( f > T_LAST ) {  // Check again after the fence!
         victim->pu.dq_bot = bot_idx+1;
@@ -2299,12 +2299,12 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
         #if WOOL_BALARM_CACHING
           if( __builtin_expect( alarm == TF_FREE, 0 ) ) {
             PR_INC( self, CTR_wrapper_reread );
-            f = tp->f;
+            f = tp->hdr;
           } else {
             f = alarm;
           }
         #else
-          f = tp->f;
+          f = tp->hdr;
         #endif
         #if WOOL_STEAL_REPF
           __builtin_prefetch( tp );
@@ -2312,12 +2312,12 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
         if( ( !_WOOL_ordered_stores || SFS_IS_TASK( f ))
              && __builtin_expect( victim->pu.dq_bot == bot_idx, 1 )
              && (__builtin_expect( jt == NULL, 1 )
-                 || ( tmp_ssn = jt->ssn, __builtin_expect( jt->f != SFS_DONE, 1 )
+                 || ( tmp_ssn = jt->ssn, __builtin_expect( jt->hdr != SFS_DONE, 1 )
                    && __builtin_expect( tmp_ssn == ssn, 1 ) ) ) ) {
           // _wool_unbundled_mf(); // If the exchange does not have mf semantics, we do an mf
           FAST_TIME(t_post_t);
           victim->pu.dq_bot = bot_idx+1;
-          tp->f = card;
+          tp->hdr = card;
           #if WOOL_TRLF
             tp->ssn = booty_ssn+1;
           #endif
@@ -2339,7 +2339,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
       unsigned long e_idx;
 
       do {
-        f = _wool_exch_busy( &(tp->f) );
+        f = _wool_exch_busy( &(tp->hdr) );
         COMPILER_FENCE;
 
         if( f > T_LAST && bot_idx < victim->pu.pu_n_public ) {
@@ -2353,7 +2353,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
 #if !WOOL_FIXED_STEAL
           for( e_idx = victim->pu.dq_bot; e_idx < bot_idx; e_idx++ ) {
             ep = idx_to_task_p_pu( victim, e_idx, base );
-            if( ep->f > T_LAST ) {
+            if( ep->hdr > T_LAST ) {
               all_stolen = 0;
             }
           }
@@ -2431,7 +2431,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
 
     #endif
 
-    f( self, (Task *) tp );
+    f->f( self, (Task *) tp );
 
     logEvent( self, 2 );
     time_event( self, 2 );
@@ -2445,7 +2445,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
 
       COMPILER_FENCE;
       #if SINGLE_FIELD_SYNC || TWO_FIELD_SYNC
-        STORE_WRAPPER_REL( tp->f, /* (volatile wrapper_t) */ SFS_DONE );
+        STORE_WRAPPER_REL( tp->hdr, /* (volatile _wool_task_header_t) */ SFS_DONE );
       #else
         STORE_BALARM_T_REL( tp->balarm, /* (volatile balarm_t) */ STOLEN_DONE );
       #endif
@@ -2457,7 +2457,7 @@ steal( Worker *self, Worker **victim_p, wrapper_t card, int flags, volatile Task
   return SO_BUSY;
 }
 
-static int steal_one( Worker *self, Worker * victim, wrapper_t card, int flags, volatile Task *jt, unsigned long ssn )
+static int steal_one( Worker *self, Worker * victim, _wool_task_header_t card, int flags, volatile Task *jt, unsigned long ssn )
 {
   Worker* v[] = {victim, victim};
   int steal_outcome = steal( self, v, card, flags, jt, ssn );
@@ -2526,11 +2526,11 @@ static int global_poll_size = 0;
 static inline TILE_INLINE int task_appears_stealable( Task *p )
 {
   #if TWO_FIELD_SYNC
-    return p->balarm != TF_OCC && ( !_WOOL_ordered_stores || SFS_IS_TASK( p->f ) );
+    return p->balarm != TF_OCC && ( !_WOOL_ordered_stores || SFS_IS_TASK( p->hdr ) );
   #elif THE_SYNC
-    return p->stealable && p->balarm == NOT_STOLEN && p->f > T_LAST;
+    return p->stealable && p->balarm == NOT_STOLEN && p->hdr > T_LAST;
   #else
-    return p->stealable && p->f > T_LAST;
+    return p->stealable && p->hdr > T_LAST;
   #endif
 }
 
@@ -2593,7 +2593,7 @@ static void *look_for_work( void *arg )
   // parsamp_size is 0 if PARSAMP_STEALING disabled.
   Worker* scramble[n-1+parsamp_size];
   int j;
-  wrapper_t card = SFS_STOLEN( MAKE_THIEF_INFO( self_idx, 0L ) );
+  _wool_task_header_t card = SFS_STOLEN( MAKE_THIEF_INFO( self_idx, 0L ) );
 #if WOOL_STEAL_NEW_SET || (!WOOL_FIXED_STEAL && !WOOL_STEAL_NEW_SET)
   unsigned int seed = self_idx;
   int i = 0;

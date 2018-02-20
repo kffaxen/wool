@@ -338,7 +338,7 @@ typedef volatile unsigned long exarg_t;
 #endif
 
 #define STORE_WRAPPER_REL(var,val)  STORE_PTR_REL( (var), (val) )
-#define READ_WRAPPER_ACQ(var)       READ_PTR_ACQ( (var), wrapper_t )
+#define READ_WRAPPER_ACQ(var)       READ_PTR_ACQ( (var), _wool_task_header_t )
 #if WOOL_BALARM_CACHING
   #define STORE_BALARM_T_REL(var,val) STORE_PTR_REL( (var), (val) )
   #define READ_BALARM_T_ACQ(var)      READ_PTR_ACQ( (var), balarm_t )
@@ -449,13 +449,13 @@ typedef pthread_cond_t  wool_cond_t;
 #if TWO_FIELD_SYNC
 #define TASK_COMMON_FIELDS(ty)    \
   WOOL_WHEN_MSPAN( hrtime_t spawn_span; ) \
-  void (*f)(struct _Worker *, ty );  \
+  _wool_task_header_t hdr;  \
   unsigned long ssn;   \
   balarm_t balarm;
 #else
 #define TASK_COMMON_FIELDS(ty)    \
   WOOL_WHEN_MSPAN( hrtime_t spawn_span; ) \
-  void (*f)(struct _Worker *, ty );  \
+  _wool_task_header_t hdr;  \
   balarm_t balarm;
 #endif
 
@@ -464,9 +464,13 @@ struct _Worker;
 
 typedef void (* wrapper_t)( struct _Worker *, struct _Task * );
 typedef void* (* workfun_t)( void * );
+typedef struct {
+  wrapper_t f;
+} _wool_dict_t;
+typedef _wool_dict_t *_wool_task_header_t;
 
 #if WOOL_BALARM_CACHING
-  typedef wrapper_t balarm_t;
+  typedef _wool_task_header_t balarm_t;
 #else
   typedef int       balarm_t;
 #endif
@@ -485,7 +489,7 @@ typedef struct _Task {
 } Task;
 
 #if SINGLE_FIELD_SYNC
-  typedef wrapper_t grab_res_t;
+  typedef _wool_task_header_t grab_res_t;
   #define GRAB_RES_IS_TASK( r ) ( SFS_IS_TASK( r ) )
   #define GRAB_RES_TASK_CONST   ( SFS_TASK( NULL ) )
   #define GRAB_RES_EMPTY_CONST  ( SFS_EMPTY )
@@ -514,16 +518,16 @@ typedef struct _Task {
   #define GET_TASK(f)           ( f )
 #endif
 
-#define T_DONE ((wrapper_t) 0)
-#define T_BUSY ((wrapper_t) 1)
-#define T_LAST ((wrapper_t) 1)
+#define T_DONE ((_wool_task_header_t) 0)
+#define T_BUSY ((_wool_task_header_t) 1)
+#define T_LAST ((_wool_task_header_t) 1)
 
 #if SINGLE_FIELD_SYNC || TWO_FIELD_SYNC
 
-#define SFS_EMPTY        ((wrapper_t) 1)
-/* #define SFS_BUSY         ((wrapper_t) 3) */
-#define SFS_DONE         ((wrapper_t) 5)
-#define SFS_STOLEN(t)    ((wrapper_t) (2*((long)(t)) + 7)) /* Assumes thieves use index */
+#define SFS_EMPTY        ((_wool_task_header_t) 1)
+/* #define SFS_BUSY         ((_wool_task_header_t) 3) */
+#define SFS_DONE         ((_wool_task_header_t) 5)
+#define SFS_STOLEN(t)    ((_wool_task_header_t) (2*((long)(t)) + 7)) /* Assumes thieves use index */
 #define SFS_TASK(f)      (f)
 #define SFS_IS_TASK(s)   (!(((unsigned long) (s)) & 1))
 #define SFS_GET_TASK(s)  (s)
@@ -689,12 +693,12 @@ static const Worker *__self = NULL;
 __attribute__((unused))
 static const int _WOOL_(in_task) = 0;
 
-static inline TILE_INLINE wrapper_t
-cas_state( wrapper_t *mem, wrapper_t old, wrapper_t new_val )
+static inline TILE_INLINE _wool_task_header_t
+cas_state( _wool_task_header_t *mem, _wool_task_header_t old, _wool_task_header_t new_val )
 {
   #if defined(__TILECC__)
      return
-       (wrapper_t)
+       (_wool_task_header_t)
          atomic_compare_and_exchange_val_acq(
               (int*) mem, (int) new_val, (int) old );
   #elif defined(__GNUC__) && !defined(__INTEL_COMPILER)
@@ -703,7 +707,7 @@ cas_state( wrapper_t *mem, wrapper_t old, wrapper_t new_val )
     CAS( new_val, *mem, old );
     return old;
   #elif defined(__INTEL_COMPILER)
-    return (wrapper_t) __sync_val_compare_and_swap(
+    return (_wool_task_header_t) __sync_val_compare_and_swap(
                                 (long *) mem, (long) old, (long) new_val );
   #endif
 }
@@ -757,7 +761,7 @@ static inline Worker *_WOOL_(slow_get_self)( void )
   return (Worker *) _WOOL_(getspecific)( tls_self );
 }
 
-Task *_WOOL_(slow_spawn)( Worker *, Task *, wrapper_t );
+Task *_WOOL_(slow_spawn)( Worker *, Task *, _wool_task_header_t );
 Task *_WOOL_(slow_sync)( Worker *, Task *, grab_res_t );
 Worker *_WOOL_(slow_get_self)( void );
 
@@ -781,12 +785,12 @@ void work_for( workfun_t, void * );
 
 #define __wool_pop_task( w ) 0
 
-static inline wrapper_t _WOOL_(exch_busy)( volatile wrapper_t *a )
+static inline _wool_task_header_t _WOOL_(exch_busy)( volatile _wool_task_header_t *a )
 {
   #if defined(__TILECC__)
-    return (wrapper_t) __insn_tns((volatile int *) a);
+    return (_wool_task_header_t) __insn_tns((volatile int *) a);
   #else
-    wrapper_t s =
+    _wool_task_header_t s =
      #if SINGLE_FIELD_SYNC
        SFS_EMPTY;
      #else
@@ -824,7 +828,7 @@ static inline grab_res_t _WOOL_(owner_grab)( volatile Task *t )
   if( WOOL_READ_STOLEN && t->balarm != NOT_STOLEN ) {
     return t->balarm;
   }
-  t->f = T_BUSY;
+  t->hdr = T_BUSY;
   MFENCE;
   a = t->balarm;
   if( a==NOT_STOLEN ) {
@@ -834,19 +838,19 @@ static inline grab_res_t _WOOL_(owner_grab)( volatile Task *t )
   }
 #elif SINGLE_FIELD_SYNC
 
-  return _WOOL_(exch_busy)( (volatile wrapper_t *) &(t->f) );
+  return _WOOL_(exch_busy)( (volatile _wool_task_header_t *) &(t->hdr) );
 
 #elif TWO_FIELD_SYNC
 
   return _WOOL_(exch_busy_balarm)( (volatile grab_res_t *) &(t->balarm) );
 
 #else
-  wrapper_t f = T_BUSY;
+  _wool_task_header_t f = T_BUSY;
 
-  if( WOOL_READ_STOLEN && t->f <= T_LAST ) {
+  if( WOOL_READ_STOLEN && t->hdr <= T_LAST ) {
     return STOLEN_BUSY;
   }
-  f = _WOOL_(exch_busy)( (volatile wrapper_t *) &(t->f) );
+  f = _WOOL_(exch_busy)( (volatile _wool_task_header_t *) &(t->hdr) );
   COMPILER_FENCE;
   if( f > T_LAST ) { // Needs to change!
     return NOT_STOLEN;
@@ -878,7 +882,7 @@ static inline grab_res_t _WOOL_(owner_grab)( volatile Task *t )
 extern unsigned long ptr2idx_curr( Worker *, Task * );
 
 static inline __attribute__((__always_inline__))
-void _WOOL_(fast_spawn)( Worker *self, Task *cached_top, wrapper_t f )
+void _WOOL_(fast_spawn)( Worker *self, Task *cached_top, _wool_task_header_t f )
 {
 
   #if WOOL_MEASURE_SPAN
@@ -915,7 +919,7 @@ void _WOOL_(fast_spawn)( Worker *self, Task *cached_top, wrapper_t f )
   #endif
 
   #if WOOL_BALARM_CACHING
-    // cached_top->f = f;
+    // cached_top->hdr = f;
   #endif
 
 
@@ -928,7 +932,7 @@ void _WOOL_(fast_spawn)( Worker *self, Task *cached_top, wrapper_t f )
         cached_top->balarm = NOT_STOLEN;
       #endif
       COMPILER_FENCE;
-      cached_top->f = f;
+      cached_top->hdr = f;
       cached_top ++;
     } else {
       /* Slow case */
@@ -943,7 +947,7 @@ void _WOOL_(fast_spawn)( Worker *self, Task *cached_top, wrapper_t f )
     if( __builtin_expect( ((unsigned long) cached_top - (unsigned long) sfp )
 			  < self->pr.private_size, 1 ) ) {
       /* Fast case, private */
-      cached_top->f = f;
+      cached_top->hdr = f;
       cached_top ++;
     } else if( __builtin_expect( cached_top < sfp, 1 ) ) {
       /* Semi fast case, public spawn */
@@ -958,17 +962,17 @@ void _WOOL_(fast_spawn)( Worker *self, Task *cached_top, wrapper_t f )
       #endif
       #if TWO_FIELD_SYNC
         #if WOOL_BALARM_CACHING
-         cached_top->f = f;
+         cached_top->hdr = f;
           STORE_BALARM_T_REL( cached_top->balarm, f );
         #else
-          cached_top->f = f;
+          cached_top->hdr = f;
           STORE_BALARM_T_REL( cached_top->balarm, TF_FREE );
         #endif
       #else
-        STORE_WRAPPER_REL( cached_top->f, f );
+        STORE_WRAPPER_REL( cached_top->hdr, f );
       #endif
       cached_top ++;
-      cached_top->f = SFS_EMPTY;
+      cached_top->hdr = SFS_EMPTY;
     } else {
       /* Slow case */
       cached_top = _WOOL_(slow_spawn)( self, cached_top, f );
@@ -1010,7 +1014,7 @@ grab_res_t _WOOL_(grab_in_sync)( Worker *self, Task *top )
     _WOOL_(when_sync_on_public)( self );
     #if _WOOL_ordered_stores
       if( res != TF_OCC ) {
-        top->f = SFS_EMPTY;
+        top->hdr = SFS_EMPTY;
         COMPILER_FENCE;
         top->balarm = TF_FREE;
         return TF_FREE;

@@ -139,6 +139,10 @@ typedef struct _##NAME##_TD {
   } d;
 } NAME##_TD;
 
+typedef struct {
+  void (*f)(Worker *__self, NAME##_TD *t);
+} NAME##_DICT_T;
+
 static inline __attribute__((__always_inline__))
 char* NAME##_FREE_SPACE(Task* cached_top)
 {
@@ -151,6 +155,8 @@ char* NAME##_FREE_SPACE(Task* cached_top)
 
 void NAME##_WRAP(Worker *__self, NAME##_TD *t);
 
+extern NAME##_DICT_T NAME##_DICT;
+
 static inline __attribute__((__always_inline__))
 void NAME##_SPAWN(Worker *__self $FUN_a_FORMALS)
 {
@@ -161,7 +167,7 @@ $TASK_a_INIT_p
 
   COMPILER_FENCE;
 
-  _WOOL_(fast_spawn)( __self, cached_top, (wrapper_t) &NAME##_WRAP );
+  _WOOL_(fast_spawn)( __self, cached_top, (_wool_task_header_t) &NAME##_DICT );
 
 }
 
@@ -262,6 +268,8 @@ void NAME##_WRAP(Worker *__self, NAME##_TD *t)
 
   $SAVE_RVAL NAME##_CALL( __self $TASK_GET_FROM_p );
 }
+
+NAME##_DICT_T NAME##_DICT = { &NAME##_WRAP };
 
 /** SYNC related functions **/
 
