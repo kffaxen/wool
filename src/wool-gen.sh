@@ -269,7 +269,7 @@ $RTYPE NAME##_CALL(Worker *_WOOL_(self) $FUN_a_FORMALS);
 
 void NAME##_WRAP_AUX(Worker *__self, NAME##_TD *t $FUN_a_FORMALS)
 {
-  NAME##_TD *post_eval_task;
+  NAME##_TD *post_eval_task __attribute__((unused));
   NAME##_TD *volatile v_t = t;
   $RES_FIELD
 
