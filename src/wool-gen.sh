@@ -267,18 +267,23 @@ $RTYPE NAME##_CALL(Worker *_WOOL_(self) $FUN_a_FORMALS);
 
 /** SPAWN related functions **/
 
-void NAME##_WRAP(Worker *__self, NAME##_TD *t)
+void NAME##_WRAP_AUX(Worker *__self, NAME##_TD *t $FUN_a_FORMALS)
 {
-  char *_WOOL_(p) = _WOOL_(arg_ptr)( (Task *) t, $ARGS_MAX_ALIGN );
   NAME##_TD *post_eval_task;
   $RES_FIELD
 
   _WOOL_(save_link)( (Task**) &t );
 
-  $SAVE_TO_res NAME##_CALL( __self $TASK_GET_FROM_p );
+  $SAVE_TO_res NAME##_CALL( __self $CALL_a_ARGS );
 
   post_eval_task = (NAME##_TD*) _WOOL_(swap_link)( (Task**) &t, NULL );
   $SAVE_FROM_res
+}
+
+void NAME##_WRAP(Worker *__self, NAME##_TD *t)
+{
+  char *_WOOL_(p) = _WOOL_(arg_ptr)( (Task *) t, $ARGS_MAX_ALIGN );
+  NAME##_WRAP_AUX( __self, t $TASK_GET_FROM_p );
 }
 
 NAME##_DICT_T NAME##_DICT = { &NAME##_WRAP };
