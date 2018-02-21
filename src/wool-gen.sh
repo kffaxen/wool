@@ -112,6 +112,9 @@ TASK_IMPL_$r(RTYPE, NAME$MACRO_ARGS)"
   RES_FIELD="$RTYPE res;
 "
   SAVE_RVAL="t->d.res ="
+  SAVE_TO_res="res ="
+  SAVE_FROM_res="post_eval_task->d.res = res;
+"
   RETURN_RES_cached_top="( (NAME##_TD *) cached_top )->d.res"
   ASSIGN_RES="res = "
   RES_VAR="res"
@@ -124,6 +127,8 @@ VOID_TASK_IMPL_$r(NAME$MACRO_ARGS)"
   RTYPE="void"
   RES_FIELD=""
   SAVE_RVAL=""
+  SAVE_TO_res=""
+  SAVE_FROM_res=""
   RETURN_RES_cached_top=""
   ASSIGN_RES=""
   RES_VAR=""
@@ -265,8 +270,15 @@ $RTYPE NAME##_CALL(Worker *_WOOL_(self) $FUN_a_FORMALS);
 void NAME##_WRAP(Worker *__self, NAME##_TD *t)
 {
   char *_WOOL_(p) = _WOOL_(arg_ptr)( (Task *) t, $ARGS_MAX_ALIGN );
+  NAME##_TD *post_eval_task;
+  $RES_FIELD
 
-  $SAVE_RVAL NAME##_CALL( __self $TASK_GET_FROM_p );
+  _WOOL_(save_link)( (Task**) &t );
+
+  $SAVE_TO_res NAME##_CALL( __self $TASK_GET_FROM_p );
+
+  post_eval_task = (NAME##_TD*) _WOOL_(swap_link)( (Task**) &t, NULL );
+  $SAVE_FROM_res
 }
 
 NAME##_DICT_T NAME##_DICT = { &NAME##_WRAP };

@@ -1067,6 +1067,40 @@ char* _WOOL_(arg_ptr)( Task* t, size_t alignment )
   return ((char *) t) + sizeplusalign - sizeplusalign % alignment;
 }
 
+#if WOOL_JOIN_STACK
+
+// Called from the wrapper function before evaluating the stolen task to allow the task to move to the join stack.
+static inline __attribute__((always_inline))
+void _WOOL_(save_link)( Task **task_pp )
+{
+  Task *p = *task_pp;
+  p->join_data.back_link = task_pp;
+}
+
+// Called from the wrapper function after evaluating the task to get pointer to task for evaluation
+// as well as from the scavenging code.
+static inline __attribute__((always_inline))
+Task* _WOOL_(swap_link)( Task **link, Task* new_link )
+{
+  EXCHANGE( new_link, *link );
+  return new_link;     // Now, after the exchange, it is the old value
+}
+
+#else
+
+static inline __attribute__((always_inline))
+void _WOOL_(save_link)( Task **task_pp )
+{
+}
+
+static inline __attribute__((always_inline))
+Task* _WOOL_(swap_link)( Task **link, Task *new_link )
+{
+  return *link;
+}
+
+#endif
+
 #define WOOL_CONTEXT_CACHE  Worker *const _WOOL_(tmp_self) = __self; Worker* __self = _WOOL_(get_self)( _WOOL_(tmp_self), _WOOL_(in_task) ); const int _WOOL_(in_task) = 1;
 
 
