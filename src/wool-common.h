@@ -249,9 +249,9 @@
 
 
 #if WOOL_JOIN_STACK
-#define _WOOL_pool_blocks 8
+#define _WOOL_pool_blocks 128
 #else
-#define _WOOL_pool_plocks 128
+#define _WOOL_pool_blocks 8
 #endif
 
 #define SMALL_BODY             2
