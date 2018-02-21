@@ -270,13 +270,14 @@ $RTYPE NAME##_CALL(Worker *_WOOL_(self) $FUN_a_FORMALS);
 void NAME##_WRAP_AUX(Worker *__self, NAME##_TD *t $FUN_a_FORMALS)
 {
   NAME##_TD *post_eval_task;
+  NAME##_TD *volatile v_t = t;
   $RES_FIELD
 
-  _WOOL_(save_link)( (Task**) &t );
+  _WOOL_(save_link)( (Task**) &v_t );
 
   $SAVE_TO_res NAME##_CALL( __self $CALL_a_ARGS );
 
-  post_eval_task = (NAME##_TD*) _WOOL_(swap_link)( (Task**) &t, NULL );
+  post_eval_task = (NAME##_TD*) _WOOL_(swap_link)( (Task**) &v_t, NULL );
   $SAVE_FROM_res
 }
 
