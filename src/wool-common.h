@@ -457,10 +457,23 @@ typedef pthread_cond_t  wool_cond_t;
 struct _Task;
 struct _Worker;
 
+#if WOOL_JOIN_STACK
+  typedef union {
+    struct _Task **back_link;
+    unsigned long long task_index;
+  } _wool_join_data_t;
+
+  #define WOOL_LINK_FIELD _wool_join_data_t join_data;
+
+#else
+  #define WOOL_LINK_FIELD
+#endif
+
 #if TWO_FIELD_SYNC
 #define TASK_COMMON_FIELDS(ty)    \
   WOOL_WHEN_MSPAN( hrtime_t spawn_span; ) \
   _wool_task_header_t hdr;  \
+  WOOL_LINK_FIELD \
   unsigned long ssn;   \
   balarm_t balarm;
 #else
