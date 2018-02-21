@@ -454,6 +454,9 @@ typedef pthread_cond_t  wool_cond_t;
 #define wool_signal(c)    pthread_cond_signal( c )
 #define wool_broadcast(c) pthread_cond_broadcast( c )
 
+struct _Task;
+struct _Worker;
+
 #if TWO_FIELD_SYNC
 #define TASK_COMMON_FIELDS(ty)    \
   WOOL_WHEN_MSPAN( hrtime_t spawn_span; ) \
@@ -466,9 +469,6 @@ typedef pthread_cond_t  wool_cond_t;
   _wool_task_header_t hdr;  \
   balarm_t balarm;
 #endif
-
-struct _Task;
-struct _Worker;
 
 typedef void (* wrapper_t)( struct _Worker *, struct _Task * );
 typedef void* (* workfun_t)( void * );
