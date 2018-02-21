@@ -1805,8 +1805,8 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
 #endif
 
     if( a != INLINED ) {
-      assert( self->pr.curr_block_base <= t );
-      t_idx = ptr2idx_curr( self, (Task *) t );
+      assert( self->pr.curr_block_base <= self->pr.pr_top );
+      t_idx = ptr2idx_curr( self, self->pr.pr_top );
       #if ! WOOL_DEFER_BOT_DEC
         if( !WOOL_FIXED_STEAL && ( ! WOOL_STEAL_OO || self->pu.dq_bot > t_idx )  ) {
           if( WOOL_ADD_STEALABLE && self->pr.highest_bot < t_idx+1 ) {
@@ -1818,7 +1818,7 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
         }
       #else
         if( WOOL_DEFER_BOT_DEC_OPT &&
-            t == self->pr.block_base[0] &&
+            self->pr.pr_top == self->pr.block_base[0] &&
             ( ! WOOL_STEAL_OO || self->pu.dq_bot > t_idx ) )
         {
           if( WOOL_ADD_STEALABLE && self->pr.highest_bot < t_idx+1 ) {
