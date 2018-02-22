@@ -338,8 +338,8 @@ typedef volatile unsigned long exarg_t;
 #else
   #define COMPILER_FENCE  asm volatile( "" )
   // x86, amd64 and SPARC v9 can do without a store barrier
-  #define STORE_PTR_REL(var,val) ((var) = (val))
-  #define STORE_INT_REL(var,val) ((var) = (val))
+  #define STORE_PTR_REL(var,val) {COMPILER_FENCE; ((var) = (val));}
+  #define STORE_INT_REL(var,val) {COMPILER_FENCE; ((var) = (val));}
   // Depends on when reads are reordered with reads
   #define READ_PTR_ACQ(var,ty) (var)
   #define READ_INT_ACQ(var,ty) (var)
