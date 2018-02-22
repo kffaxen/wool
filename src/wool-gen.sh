@@ -118,6 +118,7 @@ TASK_IMPL_$r(RTYPE, NAME$MACRO_ARGS)"
   RETURN_RES_cached_top="( (NAME##_TD *) cached_top )->d.res"
   ASSIGN_RES="res = "
   RES_VAR="res"
+  TASK_SIZE="sizeof(NAME##_TD)"
 else
   DEF_MACRO_LHS="#define VOID_TASK_$r(NAME$MACRO_ARGS )"
   DCL_MACRO_LHS="#define VOID_TASK_DECL_$r(NAME$MACRO_DECL_ARGS)"
@@ -132,6 +133,7 @@ VOID_TASK_IMPL_$r(NAME$MACRO_ARGS)"
   RETURN_RES_cached_top=""
   ASSIGN_RES=""
   RES_VAR=""
+  TASK_SIZE="0"
 fi
 
 (\
@@ -146,6 +148,7 @@ typedef struct _##NAME##_TD {
 
 typedef struct {
   Task* (*f)(Worker *__self, NAME##_TD *t);
+  int size;
 } NAME##_DICT_T;
 
 static inline __attribute__((__always_inline__))
@@ -290,7 +293,7 @@ Task* NAME##_WRAP(Worker *__self, NAME##_TD *t)
   return NAME##_WRAP_AUX( __self, t $TASK_GET_FROM_p );
 }
 
-NAME##_DICT_T NAME##_DICT = { &NAME##_WRAP };
+NAME##_DICT_T NAME##_DICT = { &NAME##_WRAP, $TASK_SIZE };
 
 /** SYNC related functions **/
 

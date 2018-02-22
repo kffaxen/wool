@@ -487,6 +487,7 @@ typedef struct _Task * (* wrapper_t)( struct _Worker *, struct _Task * );
 typedef void* (* workfun_t)( void * );
 typedef struct {
   wrapper_t f;
+  int size;
 } _wool_dict_t;
 typedef _wool_dict_t *_wool_task_header_t;
 
