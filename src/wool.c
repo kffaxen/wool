@@ -1684,7 +1684,8 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
       }
       if( SFS_IS_TASK( f ) ) {
         // It was never stolen or thief backed out
-        f->f( self, (Task *) t );
+        Task *u __attribute__((unused)) = f->f( self, (Task *) t );
+        assert( t == u );
         a = INLINED;
       } else if( f == SFS_DONE ) {
         a = STOLEN_DONE;
@@ -1905,7 +1906,7 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
     assert( p->balarm == TF_OCC );
     PR_INC( self, CTR_inlined );
     // p->hdr = SFS_EMPTY; /* Temporary */
-    GET_TASK(f->f)( self, p );
+    (void) GET_TASK(f->f)( self, p );
   }
   assert( self->pr.pr_top == p );
 
@@ -2414,6 +2415,7 @@ steal( Worker *self, Worker **victim_p, _wool_task_header_t card, int flags, vol
 #endif
 
   if( tp != NULL ) {
+    Task* ntp;
 
     // fprintf( stderr, "S %d %d %lu\n", self_idx, victim_idx, tp - victim->pr.block_base[0] );
 
@@ -2464,7 +2466,8 @@ steal( Worker *self, Worker **victim_p, _wool_task_header_t card, int flags, vol
 
     #endif
 
-    f->f( self, (Task *) tp );
+    // The task may have been scavenged during its evaluation, so it may now reside in the join stack.
+    ntp = f->f( self, (Task *) tp );
 
     logEvent( self, 2 );
     time_event( self, 2 );
@@ -2478,9 +2481,9 @@ steal( Worker *self, Worker **victim_p, _wool_task_header_t card, int flags, vol
 
       COMPILER_FENCE;
       #if SINGLE_FIELD_SYNC || TWO_FIELD_SYNC
-        STORE_WRAPPER_REL( tp->hdr, /* (volatile _wool_task_header_t) */ SFS_DONE );
+        STORE_WRAPPER_REL( ntp->hdr, /* (volatile _wool_task_header_t) */ SFS_DONE );
       #else
-        STORE_BALARM_T_REL( tp->balarm, /* (volatile balarm_t) */ STOLEN_DONE );
+        STORE_BALARM_T_REL( ntp->balarm, /* (volatile balarm_t) */ STOLEN_DONE );
       #endif
 
     time_event( self, 8 );

@@ -145,7 +145,7 @@ typedef struct _##NAME##_TD {
 } NAME##_TD;
 
 typedef struct {
-  void (*f)(Worker *__self, NAME##_TD *t);
+  Task* (*f)(Worker *__self, NAME##_TD *t);
 } NAME##_DICT_T;
 
 static inline __attribute__((__always_inline__))
@@ -158,7 +158,7 @@ char* NAME##_FREE_SPACE(Task* cached_top)
 
 /** SPAWN related functions **/
 
-void NAME##_WRAP(Worker *__self, NAME##_TD *t);
+Task* NAME##_WRAP(Worker *__self, NAME##_TD *t);
 
 extern NAME##_DICT_T NAME##_DICT;
 
@@ -267,9 +267,9 @@ $RTYPE NAME##_CALL(Worker *_WOOL_(self) $FUN_a_FORMALS);
 
 /** SPAWN related functions **/
 
-void NAME##_WRAP_AUX(Worker *__self, NAME##_TD *t $FUN_a_FORMALS)
+Task* NAME##_WRAP_AUX(Worker *__self, NAME##_TD *t $FUN_a_FORMALS)
 {
-  NAME##_TD *post_eval_task __attribute__((unused));
+  NAME##_TD *post_eval_task;
   NAME##_TD *volatile v_t = t;
   $RES_FIELD
 
@@ -280,12 +280,14 @@ void NAME##_WRAP_AUX(Worker *__self, NAME##_TD *t $FUN_a_FORMALS)
 
   post_eval_task = (NAME##_TD*) _WOOL_(swap_link)( (Task**) &v_t, NULL );
   $SAVE_FROM_res
+
+  return (Task *) post_eval_task;
 }
 
-void NAME##_WRAP(Worker *__self, NAME##_TD *t)
+Task* NAME##_WRAP(Worker *__self, NAME##_TD *t)
 {
   char *_WOOL_(p) = _WOOL_(arg_ptr)( (Task *) t, $ARGS_MAX_ALIGN );
-  NAME##_WRAP_AUX( __self, t $TASK_GET_FROM_p );
+  return NAME##_WRAP_AUX( __self, t $TASK_GET_FROM_p );
 }
 
 NAME##_DICT_T NAME##_DICT = { &NAME##_WRAP };

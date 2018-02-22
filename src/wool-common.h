@@ -483,7 +483,7 @@ struct _Worker;
   balarm_t balarm;
 #endif
 
-typedef void (* wrapper_t)( struct _Worker *, struct _Task * );
+typedef struct _Task * (* wrapper_t)( struct _Worker *, struct _Task * );
 typedef void* (* workfun_t)( void * );
 typedef struct {
   wrapper_t f;
