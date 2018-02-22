@@ -2587,7 +2587,7 @@ static int poll( Worker *w )
   #endif
 
   p = idx_to_task_p_pu( w, bot, base );
-  if( task_appears_stealable( p ) ) {
+  if( p != NULL && task_appears_stealable( p ) ) {
     return depth + bot;
   } else {
     return -1;
