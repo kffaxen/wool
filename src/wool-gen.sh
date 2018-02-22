@@ -273,6 +273,7 @@ void NAME##_WRAP_AUX(Worker *__self, NAME##_TD *t $FUN_a_FORMALS)
   NAME##_TD *volatile v_t = t;
   $RES_FIELD
 
+  COMPILER_FENCE;
   _WOOL_(save_link)( (Task**) &v_t );
 
   $SAVE_TO_res NAME##_CALL( __self $CALL_a_ARGS );
