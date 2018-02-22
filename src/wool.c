@@ -2347,7 +2347,10 @@ steal( Worker *self, Worker **victim_p, _wool_task_header_t card, int flags, vol
           // _wool_unbundled_mf(); // If the exchange does not have mf semantics, we do an mf
           FAST_TIME(t_post_t);
           victim->pu.dq_bot = bot_idx+1;
-          tp->hdr = card;
+          #if WOOL_JOIN_STACK
+            tp->join_data.back_link = NULL;
+          #endif
+          STORE_PTR_REL(tp->hdr, card);
           #if WOOL_TRLF
             tp->ssn = booty_ssn+1;
           #endif
