@@ -601,6 +601,12 @@ struct _Worker_private {
 #else
   Task             *spawn_first_private; // Used in a fast check for spawns
 #endif
+#if WOOL_JOIN_STACK
+  Task             *join_stack_base;
+  Task             *join_stack_top;
+  unsigned long     join_stack_top_idx; // The join stack index of the first task logically outside the join stack
+  unsigned long     pool_base_idx; // The pool index of the oldest task in the pool
+#endif
   unsigned long     public_size; // Used in a fast check for absence of underflow and signal
   unsigned long     private_size; // sizeof(Task) less than the size of the private part
                                   // of the current block
@@ -641,6 +647,9 @@ struct _Worker_public {
   volatile unsigned long  ssn;         // Sequence number, incremented when bot is decreased
   volatile unsigned long  pu_n_public; // Number of public task descriptors in pool, == n_public
            Task          *pu_block_base[_WOOL_pool_blocks]; // Public copy of the block pointers
+#if WOOL_JOIN_STACK
+  volatile unsigned long long pool_base_idx; // Thieves use this one
+#endif
   wool_lock_t            *dq_lock;     // Mainly used for mutex among thieves,
                                        // but also as backup for victim
   int            is_running;  // Used when stealing workers

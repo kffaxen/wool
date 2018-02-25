@@ -908,12 +908,15 @@ static void decrement_old_thieves(void)
   return first_block_size;
 }
 
-static unsigned long start_idx_of_block( int i )
+static unsigned long start_idx_of_block( Worker *self, int i )
 {
-  return i * first_block_size;
+  unsigned long base = self->pr.pool_base_idx;
+  unsigned long base_bidx = (base / first_block_size) & (_WOOL_pool_blocks-1);
+  int ri = (i - base_bidx) & (_WOOL_pool_blocks-1);
+  return base + ri * first_block_size;
 }
 
-static inline int block_of_idx( unsigned long t )
+static inline int block_of_idx( Worker *self, unsigned long t )
 {
   return (t / first_block_size) % _WOOL_pool_blocks;
 }
@@ -928,14 +931,14 @@ static inline int block_of_idx( unsigned long t )
   return first_block_size * (1<<i);
 }
 
-static unsigned long start_idx_of_block( int i )
+static unsigned long start_idx_of_block( Worker *self, int i )
 {
   return block_size(i) - first_block_size;
 }
 
 #if !defined(WOOL_NO_CLZ)
 
-static inline int block_of_idx( unsigned long t )
+static inline int block_of_idx( Worker *self, unsigned long t )
 {
   int fblz = 8*sizeof(unsigned long) - log_first_block_size - 1;
 
@@ -944,7 +947,7 @@ static inline int block_of_idx( unsigned long t )
 
 #else
 
-static int block_of_idx( unsigned long t )
+static int block_of_idx( Worker *self, unsigned long t )
 {
   if( t < first_block_size ) {
     return 0;
@@ -953,7 +956,7 @@ static int block_of_idx( unsigned long t )
 
     while( hi-lo>1 ) {
       int m = (hi+lo)/2;
-      if( t < start_idx_of_block( m ) ) {
+      if( t < start_idx_of_block( self, m ) ) {
         hi = m;
       } else {
         lo = m;
@@ -997,7 +1000,7 @@ static Task *idx2ptr_curr( Worker *w, unsigned long t )
 {
   Task **blocks = &(w->pr.block_base[0]);
   int    idx = w->pr.t_idx;
-  return blocks[idx] + t - start_idx_of_block(idx);
+  return blocks[idx] + t - start_idx_of_block(w, idx);
 }
 #endif
 
@@ -1005,10 +1008,10 @@ static Task *idx2ptr_curr( Worker *w, unsigned long t )
 // If this value is n, then
 //   low          = base+n
 //   private_size = sizeof(Task) * (block_size-1-n)
-static unsigned long new_local_public_size( int t_idx, unsigned long n_public )
+static unsigned long new_local_public_size( Worker *self, int t_idx, unsigned long n_public )
 {
-  unsigned long this_base_idx = start_idx_of_block( t_idx ),
-                next_base_idx = start_idx_of_block( (t_idx+1) % _WOOL_pool_blocks );
+  unsigned long this_base_idx = start_idx_of_block( self, t_idx ),
+                next_base_idx = start_idx_of_block( self, (t_idx+1) % _WOOL_pool_blocks );
 
   if( n_public < this_base_idx ) {
     return 0;
@@ -1027,17 +1030,17 @@ static inline Task *idx_to_task_p_pu( Worker *w, unsigned long t, Task *b )
   if( t < first_block_size ) {
     return b+t;
   }
-  bidx = block_of_idx( t );
+  bidx = block_of_idx( w, t );
   bb = w->pu.pu_block_base[bidx];
-  return bb==NULL ? NULL : bb + ( t - start_idx_of_block( bidx ) );
+  return bb==NULL ? NULL : bb + ( t - start_idx_of_block( w, bidx ) );
 }
 
 static Task *idx_to_task_p( Worker *w, unsigned long t )
 {
-  int bidx = block_of_idx( t );
+  int bidx = block_of_idx( w, t );
   Task *bb = w->pr.block_base[bidx];
 
-  return bb==NULL ? NULL : bb + ( t - start_idx_of_block( bidx ) );
+  return bb==NULL ? NULL : bb + ( t - start_idx_of_block( w, bidx ) );
 }
 
 // This will not affect syncs. Called by owner to arrange for a
@@ -1302,7 +1305,7 @@ static void reset_all_derived( Worker *w, int maybe_skip )
   int           idx   = w->pr.t_idx;
   Task         *base  = w->pr.block_base[idx];
   unsigned long bsize = block_size(idx);
-  unsigned long pub   = new_local_public_size( idx, w->pr.n_public );
+  unsigned long pub   = new_local_public_size( w, idx, w->pr.n_public );
   Task         *jfp   = base + ( pub / sizeof(Task) );
   #if _WOOL_ordered_stores
     Task *sph = base + bsize - 1;
@@ -1390,7 +1393,7 @@ Task *_WOOL_(slow_spawn)( Worker *self, Task *p, _wool_task_header_t f )
     // Make a new block
     int new_idx = (idx+1) % _WOOL_pool_blocks;
     unsigned long n_tasks = block_size(new_idx);
-    unsigned long s_idx = start_idx_of_block( new_idx );
+    unsigned long s_idx = start_idx_of_block( self, new_idx );
     unsigned long n_public = self->pr.n_public;
 
     if( new_idx == 0 ) {
@@ -1408,7 +1411,7 @@ Task *_WOOL_(slow_spawn)( Worker *self, Task *p, _wool_task_header_t f )
     }
     next_free = self->pr.block_base[new_idx];
     // Support fast conversion of pointer to index
-    self->pr.curr_block_fidx = start_idx_of_block( new_idx );
+    self->pr.curr_block_fidx = start_idx_of_block( self, new_idx );
     self->pr.curr_block_base = self->pr.block_base[new_idx];
   }
   reset_all_derived( self, 1 );
@@ -1433,7 +1436,7 @@ static Task *push_task( Worker *self, Task *p )
       tmp = self->pr.block_base[new_idx];
       self->pr.pr_top = tmp;
       self->pr.curr_block_base = tmp;
-      self->pr.curr_block_fidx = start_idx_of_block( new_idx );
+      self->pr.curr_block_fidx = start_idx_of_block( self, new_idx );
       reset_all_derived( self, 1 );
     }
   }
@@ -1456,7 +1459,7 @@ static void pop_task( Worker *self, Task *p )
     base = self->pr.block_base[idx];
     self->pr.t_idx = idx;
     self->pr.curr_block_base = base;
-    self->pr.curr_block_fidx = start_idx_of_block( idx );
+    self->pr.curr_block_fidx = start_idx_of_block( self, idx );
     reset_all_derived( self, 1 );
 
     p = base + block_size(idx); // p is set to the very last element of the new block
@@ -1879,7 +1882,7 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
     // Now we pop back into a lower block
     self->pr.t_idx = (self->pr.t_idx-1) & (_WOOL_pool_blocks-1);
     // Support fast conversion of pointer to index
-    self->pr.curr_block_fidx = start_idx_of_block( self->pr.t_idx );
+    self->pr.curr_block_fidx = start_idx_of_block( self, self->pr.t_idx );
     self->pr.curr_block_base = self->pr.block_base[self->pr.t_idx];
 
     // set p to point at the last task descriptor in that block
