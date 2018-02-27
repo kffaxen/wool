@@ -1922,6 +1922,7 @@ struct _WorkerData {
 };
 
 static int worker_offset = LINE_SIZE;
+static int join_stack_size = 1024;
 
 static void init_worker( int w_idx )
 {
@@ -1938,6 +1939,13 @@ static void init_worker( int w_idx )
 
   w->pr.dq_base = &(d->p[0]);
   bases[w_idx] = w->pr.dq_base;
+#if WOOL_JOIN_STACK
+  w->pr.join_stack_base = alloc_aligned( join_stack_size * sizeof(Task), AA_HERE );
+  w->pr.join_stack_top = w->pr.join_stack_base;
+  w->pr.join_stack_top_idx = 0;
+  w->pr.pool_base_idx = 0;
+  w->pu.pool_base_idx = 0; // Should be kept in step with the private version
+#endif
   w->pu.flag = w_idx == 0 ? 1 : 0;
   w->pu.is_running = THREAD_GARAGE ? 1 : 0;
   w->pr.thread_leader = -1;
