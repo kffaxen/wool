@@ -513,6 +513,20 @@ typedef struct _Task {
   char p2[ PAD( ROUND( COMMON_FIELD_SIZE, P_SZ ) + TASK_PAYLOAD, LINE_SIZE ) ];
 } Task;
 
+struct _WOOL_(_StolenTask);
+
+typedef struct {
+#if WOOL_JOIN_STACK
+  struct _WOOL_(_StolenTask) *next;
+  int size;
+#endif
+} _WOOL_(StolenTaskInfo);
+
+typedef struct _WOOL_(_StolenTask) {
+  TASK_COMMON_FIELDS( struct _Task * )
+  _WOOL_(StolenTaskInfo) info;
+} _WOOL_(StolenTask);
+
 #if SINGLE_FIELD_SYNC
   typedef _wool_task_header_t grab_res_t;
   #define GRAB_RES_IS_TASK( r ) ( SFS_IS_TASK( r ) )

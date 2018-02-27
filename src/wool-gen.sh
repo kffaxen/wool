@@ -141,6 +141,7 @@ echo "$DCL_MACRO_LHS
 
 typedef struct _##NAME##_TD {
   TASK_COMMON_FIELDS( struct _##NAME##_TD * )
+  _WOOL_(StolenTaskInfo) info;
   union {
     $RES_FIELD
   } d;
@@ -276,6 +277,7 @@ Task* NAME##_WRAP_AUX(Worker *__self, NAME##_TD *t $FUN_a_FORMALS)
   NAME##_TD *volatile v_t = t;
   $RES_FIELD
 
+  t->info.size = $TASK_SIZE;
   COMPILER_FENCE;
   _WOOL_(save_link)( (Task**) &v_t );
 
