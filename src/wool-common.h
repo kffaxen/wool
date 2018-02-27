@@ -464,9 +464,11 @@ struct _Worker;
   } _wool_join_data_t;
 
   #define WOOL_LINK_FIELD _wool_join_data_t join_data;
+  #define WOOL_JOIN_LOCK_FIELD int join_lock;
 
 #else
   #define WOOL_LINK_FIELD
+  #define WOOL_JOIN_LOCK_FIELD
 #endif
 
 #if TWO_FIELD_SYNC
@@ -475,7 +477,8 @@ struct _Worker;
   _wool_task_header_t hdr;  \
   WOOL_LINK_FIELD \
   unsigned long ssn;   \
-  balarm_t balarm;
+  balarm_t balarm; \
+  WOOL_JOIN_LOCK_FIELD
 #else
 #define TASK_COMMON_FIELDS(ty)    \
   WOOL_WHEN_MSPAN( hrtime_t spawn_span; ) \

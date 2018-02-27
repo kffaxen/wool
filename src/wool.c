@@ -1274,6 +1274,9 @@ static void init_block( Task *base, unsigned long size, unsigned long public_tas
       base[i].f = T_BUSY;
       base[i].balarm = NOT_STOLEN;
     #endif
+    #if WOOL_JOIN_STACK
+      base[i].join_lock = 0;
+    #endif
   }
 }
 
