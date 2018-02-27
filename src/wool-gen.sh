@@ -281,7 +281,7 @@ Task* NAME##_WRAP_AUX(Worker *__self, NAME##_TD *t $FUN_a_FORMALS)
 
   $SAVE_TO_res NAME##_CALL( __self $CALL_a_ARGS );
 
-  post_eval_task = (NAME##_TD*) _WOOL_(swap_link)( (Task**) &v_t, NULL );
+  post_eval_task = (NAME##_TD*) _WOOL_(swap_link)( (Task *volatile *) &v_t, (Task *) t );
   $SAVE_FROM_res
 
   return (Task *) post_eval_task;

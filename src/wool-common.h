@@ -1082,6 +1082,8 @@ char* _WOOL_(arg_ptr)( Task* t, size_t alignment )
 
 #if WOOL_JOIN_STACK
 
+extern Task *_WOOL_(dummy_task_ptr);
+
 // Called from the wrapper function before evaluating the stolen task to allow the task to move to the join stack.
 static inline __attribute__((always_inline))
 void _WOOL_(save_link)( Task **task_pp )
@@ -1090,13 +1092,35 @@ void _WOOL_(save_link)( Task **task_pp )
   p->join_data.back_link = task_pp;
 }
 
+static inline __attribute__((always_inline))
+void _WOOL_(join_lock_lock)( volatile int *lock )
+{
+  int lock_var = 1;
+  do {
+    EXCHANGE( lock_var, lock );
+  } while( lock_var == 1 );
+}
+
+static inline __attribute__((always_inline))
+void _WOOL_(join_lock_unlock)( volatile int *lock )
+{
+  STORE_INT_REL( *lock, 0 );
+}
+
 // Called from the wrapper function after evaluating the task to get pointer to task for evaluation
 // as well as from the scavenging code.
 static inline __attribute__((always_inline))
-Task* _WOOL_(swap_link)( Task **link, Task* new_link )
+Task* _WOOL_(swap_link)( Task *volatile *link, Task* old_link )
 {
-  EXCHANGE( new_link, *link );
-  return new_link;     // Now, after the exchange, it is the old value
+  Task *new_link;
+  _WOOL_(join_lock_lock)( &(old_link->join_lock) );
+  new_link = *link; // Must be protected by lock
+  if( new_link == old_link ) {
+    // Task has not been moved, tell victim not to move it
+    old_link->join_data.back_link = &_WOOL_(dummy_task_ptr);
+  }
+  _WOOL_(join_lock_unlock)( &(old_link->join_lock) );
+  return new_link;
 }
 
 #else
@@ -1107,7 +1131,7 @@ void _WOOL_(save_link)( Task **task_pp )
 }
 
 static inline __attribute__((always_inline))
-Task* _WOOL_(swap_link)( Task **link, Task *new_link )
+Task* _WOOL_(swap_link)( Task *volatile *link, Task *old_link )
 {
   return *link;
 }

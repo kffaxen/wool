@@ -900,6 +900,8 @@ static void decrement_old_thieves(void)
 
 #if WOOL_JOIN_STACK
 
+Task *_WOOL_(dummy_task_ptr) = NULL; // A task address that is neither NULL nor in any pool
+
 #define log_first_block_size 9
 #define     first_block_size (1 << log_first_block_size)
 
