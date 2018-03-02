@@ -1528,6 +1528,12 @@ static Task *push_task( Worker *self, Task *p )
       self->pr.curr_block_fidx = start_idx_of_block( self, new_idx );
       reset_all_derived( self, 1 );
     }
+#if WOOL_JOIN_STACK
+  } else {
+    // The join task is in the join stack, which was already popped in rts_sync, so we push
+    self->pr.join_stack_top_idx++;
+    self->pr.join_stack_top++; // We are joining with a physical task descriptor TODO: compact
+#endif
   }
   return self->pr.pr_top;
 }
@@ -1536,7 +1542,13 @@ static void pop_task( Worker *self, Task *p )
 {
   Task *base = self->pr.curr_block_base;
 
-  if( p != self->pr.pr_top ) return;
+#if WOOL_JOIN_STACK
+  if( p != self->pr.pr_top ) {
+    // We pop the join stack
+    self->pr.join_stack_top_idx--;
+    self->pr.join_stack_top--; // We are joining with a physical task descriptor TODO: compact
+  }
+#endif
 
   if( p > base ) {
      p--;
@@ -1967,6 +1979,22 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
   if( __builtin_expect( self->pr.curr_block_base < p, 1 ) ) {
     // No pop out of block
     p--;
+    self->pr.pr_top = p;
+#if WOOL_JOIN_STACK
+  } else if( self->pr.curr_block_fidx == self->pr.pool_base_idx ) {
+    unsigned long join_idx = self->pr.join_stack_top_idx-1;
+    Task *join_top = self->pr.join_stack_top;
+
+    self->pr.join_stack_top_idx = join_idx;
+    if( join_top == self->pr.join_stack_base || (--join_top)->join_data.task_index != join_idx ) {
+      // The join task is not explicitly in the join stack, thus it is stolen and completed
+      return p;
+    } else {
+      // The top element in the join stack is explicitly represented as a physical task descriptor
+      self->pr.join_stack_top = join_top;
+      p = join_top;
+    }
+#endif
   } else {
     // Now we pop back into a lower block
     self->pr.t_idx = (self->pr.t_idx-1) & (_WOOL_pool_blocks-1);
@@ -1976,6 +2004,7 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
 
     // set p to point at the last task descriptor in that block
     p = self->pr.block_base[self->pr.t_idx] + block_size(self->pr.t_idx) - 1;
+    self->pr.pr_top = p;
   }
   // now recompute sizes etc, resetting both exceptions
   reset_all_derived( self, 1 );
@@ -1984,10 +2013,10 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
   } else {
     assert( p > self->pr.curr_block_base );
     p--;
+    self->pr.pr_top = p;
   }
 #endif
 
-  self->pr.pr_top = p;
   // if p points at a public task, we join with it, otherwise inline it
   if( p_idx-1 < self->pr.n_public ) {
     _WOOL_(rts_sync)( self, p, grab_res );
@@ -2000,7 +2029,6 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
     // p->hdr = SFS_EMPTY; /* Temporary */
     (void) GET_TASK(f->f)( self, p );
   }
-  assert( self->pr.pr_top == p );
 
   return p;
 }
