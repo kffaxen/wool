@@ -1024,6 +1024,18 @@ static unsigned long new_local_public_size( Worker *self, int t_idx, unsigned lo
   }
 }
 
+#if WOOL_JOIN_STACK
+
+static inline Task *idx_to_task_p_pu( Worker *w, unsigned long t, Task *b )
+{
+  int bidx = (t / first_block_size) % _WOOL_pool_blocks;
+  Task *block = w->pu.pu_block_base[bidx];
+
+  return block == NULL ? NULL : block + t % first_block_size;
+}
+
+#else
+
 static inline Task *idx_to_task_p_pu( Worker *w, unsigned long t, Task *b )
 {
   int bidx;
@@ -1036,6 +1048,8 @@ static inline Task *idx_to_task_p_pu( Worker *w, unsigned long t, Task *b )
   bb = w->pu.pu_block_base[bidx];
   return bb==NULL ? NULL : bb + ( t - start_idx_of_block( w, bidx ) );
 }
+
+#endif
 
 static Task *idx_to_task_p( Worker *w, unsigned long t )
 {
@@ -1344,6 +1358,66 @@ static void reset_all_derived( Worker *w, int maybe_skip )
   }
 }
 
+#if WOOL_JOIN_STACK
+
+static inline int is_stolen( Task *t )
+{
+  assert( TWO_FIELD_SYNC );
+  assert( !WOOL_BALARM_CACHING );
+
+  return !SFS_IS_TASK( t->hdr );
+}
+
+static Task* evacuate_oldest_block( Worker *self, unsigned long new_base_idx )
+{
+  int bidx = (self->pr.pool_base_idx / first_block_size) % _WOOL_pool_blocks;
+  Task *sp = self->pr.join_stack_top;
+  Task *block = self->pr.block_base[bidx];
+  unsigned long join_top_idx = self->pr.join_stack_top_idx;
+  int public_tasks = self->pr.n_public - new_base_idx;
+  int i;
+
+  for( i = 0; i < first_block_size; i++ ) {
+    _WOOL_(StolenTask) *curr = (_WOOL_(StolenTask) *) (block+i);
+    while( SFS_IS_TASK(curr->hdr) || curr->join_data.back_link == NULL ) /* Empty */ ;
+    _WOOL_(join_lock_lock)( &(curr->join_lock) );
+    if( curr->join_data.back_link == &_WOOL_(dummy_task_ptr) ) {
+      // Thief got here first; wait for it to write DONE and then copy
+      while( curr->hdr != SFS_DONE ) /* wait */ ;
+      if( curr->info.size > 0 ) {
+        memcpy( sp, curr, curr->info.size ); // Or a Task assignment?
+        sp->join_data.task_index = join_top_idx + i;
+        sp++;
+      }
+    } else {
+      // We got here first; move the task to the join stack
+      // Copy unfinished task, only the common fields are necessary
+      * (__wool_task_common *) sp = * (__wool_task_common *) curr;
+      *(curr->join_data.back_link) = sp;
+      sp->join_data.task_index = join_top_idx + i;
+      sp++;
+    }
+    _WOOL_(join_lock_unlock)( &(curr->join_lock) );
+    curr->balarm = _WOOL_ordered_stores && i < public_tasks ? TF_FREE : TF_OCC;
+  }
+  self->pr.join_stack_top = sp;
+  self->pr.join_stack_top_idx = join_top_idx + first_block_size;
+  return block;
+}
+
+#else
+
+static inline int is_stolen( Task *t )
+{
+  return 0;
+}
+
+static Task* evacuate_block( Worker *self, int bidx )
+{
+  return NULL;
+}
+#endif
+
 Task *_WOOL_(slow_spawn)( Worker *self, Task *p, _wool_task_header_t f )
 {
   /* This function is called for a spawn in either or both of the following cases
@@ -1400,17 +1474,27 @@ Task *_WOOL_(slow_spawn)( Worker *self, Task *p, _wool_task_header_t f )
     unsigned long n_tasks = block_size(new_idx);
     unsigned long s_idx = start_idx_of_block( self, new_idx );
     unsigned long n_public = self->pr.n_public;
+    int base_bidx = (self->pr.pool_base_idx / first_block_size) % _WOOL_pool_blocks;
 
-    if( new_idx == 0 ) {
-      fprintf( stderr, "Out of space for task stack\n" );
-      exit(1);
-    }
     self->pr.t_idx = new_idx;
-    if( self->pr.block_base[new_idx] == NULL ) {
+    if( new_idx == base_bidx || self->pr.block_base[new_idx] == NULL ) {
       // fprintf( stderr, "%d %d\n", self->pr.idx, new_idx );
-      self->pr.block_base[new_idx] = (Task *) alloc_aligned( n_tasks * sizeof(Task), AA_HERE );
-      init_block( self->pr.block_base[new_idx], n_tasks,
-                  s_idx < n_public ? n_public - s_idx : 0 );
+      if( base_bidx != idx && is_stolen( self->pr.block_base[base_bidx] + first_block_size - 1 ) ) {
+        // The last task (and therefore all tasks) of the base block are stolen,
+        // so we evacuate the base block to the join queue.
+        self->pr.block_base[new_idx] = evacuate_oldest_block( self, s_idx );
+        self->pr.block_base[base_bidx] = NULL;
+        self->pr.pool_base_idx += first_block_size;
+      } else if( new_idx != base_bidx ) {
+        // We can't evacuate the join block, but we have room for a new block
+        self->pr.block_base[new_idx] = (Task *) alloc_aligned( n_tasks * sizeof(Task), AA_HERE );
+        init_block( self->pr.block_base[new_idx], n_tasks,
+                    s_idx < n_public ? n_public - s_idx : 0 );
+      } else {
+        // The task pool is really full, so we fail miserably.
+        fprintf( stderr, "Out of space for task stack\n" );
+        exit(1);
+      }
       SFENCE;
       self->pu.pu_block_base[new_idx] = self->pr.block_base[new_idx];
     }
@@ -1927,7 +2011,7 @@ struct _WorkerData {
 };
 
 static int worker_offset = LINE_SIZE;
-static int join_stack_size = 1024;
+static int join_stack_size = 1024*1024;
 
 static void init_worker( int w_idx )
 {
