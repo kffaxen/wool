@@ -459,12 +459,12 @@ struct _Worker;
 
 #if WOOL_JOIN_STACK
   typedef union {
-    struct _Task **back_link;
+    struct _Task *volatile *volatile back_link;
     unsigned long long task_index;
   } _wool_join_data_t;
 
   #define WOOL_LINK_FIELD _wool_join_data_t join_data;
-  #define WOOL_JOIN_LOCK_FIELD int join_lock;
+  #define WOOL_JOIN_LOCK_FIELD volatile int join_lock;
 
 #else
   #define WOOL_LINK_FIELD
@@ -474,10 +474,10 @@ struct _Worker;
 #if TWO_FIELD_SYNC
 #define TASK_COMMON_FIELDS(ty)    \
   WOOL_WHEN_MSPAN( hrtime_t spawn_span; ) \
-  _wool_task_header_t hdr;  \
+  volatile _wool_task_header_t hdr;  \
   WOOL_LINK_FIELD \
-  unsigned long ssn;   \
-  balarm_t balarm; \
+  volatile unsigned long ssn;   \
+  volatile balarm_t balarm; \
   WOOL_JOIN_LOCK_FIELD
 #else
 #define TASK_COMMON_FIELDS(ty)    \
