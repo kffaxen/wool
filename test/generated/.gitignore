@@ -1,0 +1,3 @@
+# This file allows the 'generated' directory to be checked into git while ignoring its contents.
+*
+!.gitignore
