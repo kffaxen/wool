@@ -274,8 +274,8 @@
 
 unsigned block_size(int);
 
-#define IN_CURRENT(self,p) (self->block_base[self->t_idx] <= p && \
-                            p < self->block_base[self->t_idx] + block_size( self->t_idx ) )
+#define IN_CURRENT(self,p) (self->pr.block_base[self->pr.t_idx] <= p && \
+                            p < self->pr.block_base[self->pr.t_idx] + block_size( self->pr.t_idx ) )
 
 typedef long long unsigned int hrtime_t;
 typedef volatile unsigned long exarg_t;
