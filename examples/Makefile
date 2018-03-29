@@ -16,7 +16,7 @@ LDLIBS_OMP = `echo "$(LDLIBS)" | $(SED) "s\#$(TOP)/src/wool-main.o\#\#g"`
 # Keep fib alone on the last line of TARGETS to avoid merge conflicts
 # with other branches.
 TARGETS = stress loop2 mm1 mm2 mm3 mm4 memstress mm5 mm6 mm7 skew \
-          fib seqfib dynamic-loop
+          fib seqfib dynamic-loop fanout vfanout
 
 ifdef WOOL_OPENMP
   TARGETS += fib-omp
@@ -43,6 +43,10 @@ skew: skew.o loop.o
 memstress: memstress.o reads.o
 fib-omp.o: CFLAGS += -fopenmp
 dynamic-loop: dynamic-loop.o loop.o
+fanout: LDLIBS=-lwool $(threadsflag)
+fanout: fanout.o loop.o
+vfanout: LDLIBS=-lwool $(threadsflag)
+vfanout: vfanout.o loop.o
 
 $(TOP)/src/libwool.a: $(TOP)/src/wool.h
 	cd $(TOP) && $(MAKE) -C src libwool.a
