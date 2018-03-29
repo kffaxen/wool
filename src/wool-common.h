@@ -620,7 +620,8 @@ struct _Worker_private {
 #endif
 #if WOOL_JOIN_STACK
   Task             *join_stack_base;
-  Task             *join_stack_top;
+  _WOOL_(StolenTask) *join_stack_top;
+  _WOOL_(StolenTask) *join_stack_free;
   unsigned long     join_stack_top_idx; // The join stack index of the first task logically outside the join stack
   unsigned long     pool_base_idx; // The pool index of the oldest task in the pool
 #endif
@@ -1094,6 +1095,8 @@ char* _WOOL_(arg_ptr)( Task* t, size_t alignment )
   return ((char *) t) + sizeplusalign - sizeplusalign % alignment;
 }
 
+#define WOOL_WAIT_CHECK(var) {if(++var >= 1000000000) {var = 0; fprintf( stderr, "Long wait at %s:%d\n", __FILE__, __LINE__ );}}
+
 #if WOOL_JOIN_STACK
 
 extern Task *_WOOL_(dummy_task_ptr);
@@ -1110,8 +1113,10 @@ static inline __attribute__((always_inline))
 void _WOOL_(join_lock_lock)( volatile int *lock )
 {
   int lock_var = 1;
+  long w = 0;
   do {
-    EXCHANGE( lock_var, lock );
+    EXCHANGE( lock_var, *lock );
+    WOOL_WAIT_CHECK(w);
   } while( lock_var == 1 );
 }
 

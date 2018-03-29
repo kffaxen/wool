@@ -1204,9 +1204,11 @@ static void synchronized_privatize( volatile Task *t )
 {
   #if TWO_FIELD_SYNC && _WOOL_ordered_stores
     balarm_t a = TF_FREE;
+    long w = 0;
     do {
       while( a == TF_OCC ) {
         a = t->balarm;
+        WOOL_WAIT_CHECK(w);
       }
       a = _WOOL_(exch_busy_balarm)( &(t->balarm) );
     } while( a == TF_OCC );
@@ -1360,6 +1362,45 @@ static void reset_all_derived( Worker *w, int maybe_skip )
 
 #if WOOL_JOIN_STACK
 
+static void compact_join_stack( Worker *self )
+{
+  _WOOL_(StolenTask) *t, *first = NULL, **prev_p = &first, *next,
+                     *jsfree = self->pr.join_stack_free;
+
+  assert( TWO_FIELD_SYNC );
+  assert( !WOOL_BALARM_CACHING );
+
+  for( t = self->pr.join_stack_top; t != NULL; t = next ) {
+    next = t->info.next;
+    if( t->hdr != SFS_DONE || t->info.size > 0 ) {
+      *prev_p = t;
+       prev_p = &(t->info.next);
+    } else {
+      t->info.next = jsfree;
+      jsfree = t;
+    }
+  }
+  *prev_p = NULL;
+  self->pr.join_stack_top = first;
+  self->pr.join_stack_free = jsfree;
+}
+
+static inline _WOOL_(StolenTask) *js_alloc( Worker *self )
+{
+  _WOOL_(StolenTask) *t;
+  if( self->pr.join_stack_free == NULL ) {
+    compact_join_stack( self );
+    if( self->pr.join_stack_free == NULL ) {
+      // We did not recover anything
+      fprintf( stderr, "Out of space for the join stack\n" );
+      exit( 1 );
+    }
+  }
+  t = self->pr.join_stack_free;
+  self->pr.join_stack_free = t->info.next;
+  return t;
+}
+
 static inline int is_stolen( Task *t )
 {
   assert( TWO_FIELD_SYNC );
@@ -1371,36 +1412,43 @@ static inline int is_stolen( Task *t )
 static Task* evacuate_oldest_block( Worker *self, unsigned long new_base_idx )
 {
   int bidx = (self->pr.pool_base_idx / first_block_size) % _WOOL_pool_blocks;
-  Task *sp = self->pr.join_stack_top;
   Task *block = self->pr.block_base[bidx];
   unsigned long join_top_idx = self->pr.join_stack_top_idx;
   int public_tasks = self->pr.n_public - new_base_idx;
   int i;
+  long w = 0;
 
   for( i = 0; i < first_block_size; i++ ) {
     _WOOL_(StolenTask) *curr = (_WOOL_(StolenTask) *) (block+i);
-    while( SFS_IS_TASK(curr->hdr) || curr->join_data.back_link == NULL ) /* Empty */ ;
+    while( SFS_IS_TASK(curr->hdr) ) WOOL_WAIT_CHECK(w) ;
+    while( curr->join_data.back_link == NULL ) WOOL_WAIT_CHECK(w) ;
     _WOOL_(join_lock_lock)( &(curr->join_lock) );
     if( curr->join_data.back_link == &_WOOL_(dummy_task_ptr) ) {
       // Thief got here first; wait for it to write DONE and then copy
-      while( curr->hdr != SFS_DONE ) /* wait */ ;
+      while( curr->hdr != SFS_DONE ) WOOL_WAIT_CHECK(w) ;
       if( curr->info.size > 0 ) {
-        memcpy( sp, curr, curr->info.size ); // Or a Task assignment?
-        sp->join_data.task_index = join_top_idx + i;
-        sp++;
+        _WOOL_(StolenTask) *t = js_alloc( self );
+        memcpy( t, curr, curr->info.size ); // Or a Task assignment?
+        t->join_data.task_index = join_top_idx + i;
+        t->info.next = self->pr.join_stack_top;
+        self->pr.join_stack_top = t;
       }
     } else {
       // We got here first; move the task to the join stack
       // Copy unfinished task, only the common fields are necessary
-      * (__wool_task_common *) sp = * (__wool_task_common *) curr;
-      *(curr->join_data.back_link) = sp;
-      sp->join_data.task_index = join_top_idx + i;
-      sp++;
+      _WOOL_(StolenTask) *t = js_alloc( self );
+      // fprintf( stderr, "Moving unfinished task %lu to address %p\n", join_top_idx+i, t );
+      assert( curr->hdr != SFS_DONE );
+      * (__wool_task_common *) t = * (__wool_task_common *) curr;
+      *(curr->join_data.back_link) = (Task *) t;
+      t->join_data.task_index = join_top_idx + i;
+      t->info.next = self->pr.join_stack_top;
+      self->pr.join_stack_top = t;
+      assert( curr->hdr != SFS_DONE );
     }
     _WOOL_(join_lock_unlock)( &(curr->join_lock) );
     curr->balarm = _WOOL_ordered_stores && i < public_tasks ? TF_FREE : TF_OCC;
   }
-  self->pr.join_stack_top = sp;
   self->pr.join_stack_top_idx = join_top_idx + first_block_size;
   return block;
 }
@@ -1412,7 +1460,7 @@ static inline int is_stolen( Task *t )
   return 0;
 }
 
-static Task* evacuate_block( Worker *self, int bidx )
+static Task* evacuate_oldest_block( Worker *self, unsigned long new_base_idx )
 {
   return NULL;
 }
@@ -1530,9 +1578,16 @@ static Task *push_task( Worker *self, Task *p )
     }
 #if WOOL_JOIN_STACK
   } else {
-    // The join task is in the join stack, which was already popped in rts_sync, so we push
+    // The join task is in the join stack, which was not popped in rts_sync, so we do nothing
+   #if 0
+    _WOOL_(StolenTask) *sp = (_WOOL_(StolenTask) *) p; // Type change, for convenience
     self->pr.join_stack_top_idx++;
-    self->pr.join_stack_top++; // We are joining with a physical task descriptor TODO: compact
+    assert( sp == self->pr.join_stack_free );
+    // Move *sp from the free list to the join stack
+    self->pr.join_stack_free = sp->info.next;
+    sp->info.next = self->pr.join_stack_top;
+    self->pr.join_stack_top = sp;
+   #endif
 #endif
   }
   return self->pr.pr_top;
@@ -1542,11 +1597,22 @@ static void pop_task( Worker *self, Task *p )
 {
   Task *base = self->pr.curr_block_base;
 
+  assert( base != NULL );
+
 #if WOOL_JOIN_STACK
-  if( p != self->pr.pr_top ) {
-    // We pop the join stack
+  if( self->pr.block_base[ block_of_idx( self, self->pr.pool_base_idx ) ] == self->pr.pr_top ) {
+    // We did not push to the join stack, so we do not pop now
+   #if 0
+    _WOOL_(StolenTask) *sp = (_WOOL_(StolenTask) *) p; // Type change, for convenience
     self->pr.join_stack_top_idx--;
-    self->pr.join_stack_top--; // We are joining with a physical task descriptor TODO: compact
+    // Leap frogging ensures that *sp can not have been compacted away
+    assert( sp == self->pr.join_stack_top );
+    // We move *sp from the join stack to the free list
+    self->pr.join_stack_top = sp->info.next;
+    sp->info.next = self->pr.join_stack_free;
+    self->pr.join_stack_free = sp;
+   #endif
+   return;
   }
 #endif
 
@@ -1558,12 +1624,14 @@ static void pop_task( Worker *self, Task *p )
     assert( idx >= 0 );
 
     base = self->pr.block_base[idx];
+
+    assert( base != NULL );
     self->pr.t_idx = idx;
     self->pr.curr_block_base = base;
     self->pr.curr_block_fidx = start_idx_of_block( self, idx );
     reset_all_derived( self, 1 );
 
-    p = base + block_size(idx); // p is set to the very last element of the new block
+    p = base + block_size(idx) - 1; // p is set to the very last element of the new block
   }
   self->pr.pr_top = p;
 }
@@ -1763,6 +1831,7 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
   balarm_t b;
 #endif
   long unsigned t_idx;
+  long w = 0;
 
 #if ! WOOL_SYNC_NOLOCK
   wool_lock( self->dq_lock );
@@ -1773,6 +1842,7 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
       f = t->hdr;
       while( SFS_IS_TASK( f ) && b == TF_OCC ) {
         do {
+          WOOL_WAIT_CHECK(w);
           f = t->hdr;
           b = t->balarm;
         } while( SFS_IS_TASK( f ) && b == TF_OCC );
@@ -1829,6 +1899,7 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
       int trlf_timer = trlf_threshold;
       int self_idx = self->pr.idx;
       _wool_task_header_t card = SFS_STOLEN( MAKE_THIEF_INFO( self_idx, ptr2idx_curr( self, tp1 ) ) );
+      long ww = 0;
 
       assert( thief_idx <= n_workers );
 
@@ -1850,6 +1921,8 @@ void _WOOL_(rts_sync)( Worker *self, volatile Task *t, grab_res_t r )
 
       do {
         int steal_outcome = SO_NO_WORK;
+
+        WOOL_WAIT_CHECK(ww);
 
         if( !WOOL_FIXED_STEAL && switch_interval > 0 ) {
           steal_outcome = steal_one( self, thief, card, 0, t, t->ssn );
@@ -1976,6 +2049,8 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
   maybe_less_stealable( self, p );
 #endif
 
+  assert( self->pr.curr_block_base != NULL );
+
   if( __builtin_expect( self->pr.curr_block_base < p, 1 ) ) {
     // No pop out of block
     p--;
@@ -1983,16 +2058,18 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
 #if WOOL_JOIN_STACK
   } else if( self->pr.curr_block_fidx == self->pr.pool_base_idx ) {
     unsigned long join_idx = self->pr.join_stack_top_idx-1;
-    Task *join_top = self->pr.join_stack_top;
+    _WOOL_(StolenTask) *join_top = self->pr.join_stack_top;
 
-    self->pr.join_stack_top_idx = join_idx;
-    if( join_top == self->pr.join_stack_base || (--join_top)->join_data.task_index != join_idx ) {
-      // The join task is not explicitly in the join stack, thus it is stolen and completed
-      return p;
+    // self->pr.join_stack_top_idx = join_idx;
+    if( join_top == NULL || join_top->join_data.task_index != join_idx ) {
+      // The join task is not explicitly in the join stack, thus it is stolen and completed and void.
+      // Hence we logically pop it, but not physically.
+      self->pr.join_stack_top_idx = join_idx;
+      return NULL; // To catch any errors; this return value should not be used
     } else {
       // The top element in the join stack is explicitly represented as a physical task descriptor
-      self->pr.join_stack_top = join_top;
-      p = join_top;
+      // We should continue joining with it
+      p = (Task *) join_top;
     }
 #endif
   } else {
@@ -2001,6 +2078,8 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
     // Support fast conversion of pointer to index
     self->pr.curr_block_fidx = start_idx_of_block( self, self->pr.t_idx );
     self->pr.curr_block_base = self->pr.block_base[self->pr.t_idx];
+
+    assert( self->pr.curr_block_base != NULL );
 
     // set p to point at the last task descriptor in that block
     p = self->pr.block_base[self->pr.t_idx] + block_size(self->pr.t_idx) - 1;
@@ -2030,6 +2109,17 @@ Task *_WOOL_(slow_sync)( Worker *self, Task *p, grab_res_t grab_res )
     (void) GET_TASK(f->f)( self, p );
   }
 
+#if WOOL_JOIN_STACK
+  if( p == (Task *) self->pr.join_stack_top ) {
+    // We have joined with a task in the join stack, now pop it
+    _WOOL_(StolenTask) *sp = (_WOOL_(StolenTask) *) p; // For convenience below
+    self->pr.join_stack_top = sp->info.next;
+    sp->info.next = self->pr.join_stack_free;
+    self->pr.join_stack_free = sp;
+    // Pop it logically as well
+    self->pr.join_stack_top_idx--;
+  }
+#endif
   return p;
 }
 
@@ -2048,6 +2138,9 @@ static void init_worker( int w_idx )
   struct _WorkerData *d;
   int offset = w_idx * worker_offset;
   int size = first_block_size * sizeof(Task);
+#if WOOL_JOIN_STACK
+  Task *stolen_js = NULL;
+#endif
 
   // We're offsetting the worker data a bit to avoid cache conflicts
   d = (struct _WorkerData *)
@@ -2058,7 +2151,13 @@ static void init_worker( int w_idx )
   bases[w_idx] = w->pr.dq_base;
 #if WOOL_JOIN_STACK
   w->pr.join_stack_base = alloc_aligned( join_stack_size * sizeof(Task), AA_HERE );
-  w->pr.join_stack_top = w->pr.join_stack_base;
+  stolen_js = w->pr.join_stack_base;
+  w->pr.join_stack_top = NULL;
+  for( i = 1; i < join_stack_size; i++ ) {
+    ((_WOOL_(StolenTask) *) (stolen_js+i-1))->info.next = (_WOOL_(StolenTask) *) (stolen_js+i);
+  }
+  ((_WOOL_(StolenTask) *) (stolen_js+join_stack_size-1))->info.next = NULL;
+  w->pr.join_stack_free = (_WOOL_(StolenTask) *) stolen_js;
   w->pr.join_stack_top_idx = 0;
   w->pr.pool_base_idx = 0;
   w->pu.pool_base_idx = 0; // Should be kept in step with the private version
