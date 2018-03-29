@@ -10,7 +10,7 @@ CFLAGS += -I$(TOP)/src -I$(TOP)/examples -Icheckfiles
 LDLIBS += -lwool -lcheck $(threadsflag) -lm -lrt
 LDFLAGS += -L$(TOP)/src
 
-TARGETS = generated/wool-core generated/wool-syncall
+TARGETS = generated/wool-core
 OBJS = $(TARGETS:%=%.o)
 COBJS = $(OBJS:%.o=%.c)
 
@@ -21,8 +21,6 @@ test: $(OBJS)
 
 clean :
 	$(RM) $(OBJS) $(TARGETS) $(COBJS)
-
-generated/wool-syncall: CFLAGS += -DUSE_SYNC_ALL
 
 generated/%.c: checkfiles/%.check
 	$(TOP)/scripts/checkmk $< > $@
